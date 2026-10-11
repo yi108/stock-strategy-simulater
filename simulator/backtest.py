@@ -76,6 +76,40 @@ def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0) -> 
                   meta={"strategy": repr(strategy)})
 
 
+def run_rows(universe: dict[str, pd.DataFrame],
+             rows: list[tuple[str, Strategy, float]],
+             fee_bps: float = 10.0) -> Result:
+    """自由組合回測：rows 為 (ticker, Strategy, weight) 列表。
+
+    與 run_portfolio 不同，這裡不以 ticker 為 key——同一檔股票可以
+    重複出現、搭配不同策略與權重，完全自由排列。
+    """
+    active = [(t, s, w) for (t, s, w) in rows if w > 0 and t in universe]
+    if not active:
+        raise ValueError("沒有有效的組合列（權重需 > 0 且標的需有資料）")
+    total = sum(w for _, _, w in active)
+    per = []
+    trades = 0
+    for t, s, w in active:
+        r = run_signals(universe[t], s, fee_bps=fee_bps)
+        per.append((t, s, w / total, r))
+        trades += r.trades
+    ret_df = pd.DataFrame({i: p[3].returns for i, p in enumerate(per)}).dropna()
+    if ret_df.empty:
+        raise ValueError("各標的沒有重疊的交易日")
+    port_ret = sum(ret_df[i] * p[2] for i, p in enumerate(per))
+    equity = (1.0 + port_ret).cumprod()
+    row_results = []
+    for i, (t, s, w, r) in enumerate(per):
+        eq = (1.0 + ret_df[i]).cumprod()
+        row_res = Result(equity=eq, returns=ret_df[i], positions=ret_df[i] * 0,
+                         trades=r.trades)
+        row_results.append({"ticker": t, "strategy": s, "weight": round(w, 4),
+                            "result": row_res})
+    return Result(equity=equity, returns=port_ret, positions=ret_df * 0, trades=trades,
+                  meta={"rows": row_results})
+
+
 def run_portfolio(universe: dict[str, pd.DataFrame],
                   strategies: dict[str, Strategy],
                   weights: dict[str, float],

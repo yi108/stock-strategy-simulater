@@ -16,7 +16,7 @@ from typing import Callable
 
 import pandas as pd
 
-from .backtest import Result, run_portfolio, run_signals
+from .backtest import Result, run_portfolio, run_rows, run_signals
 from .strategies import STRATEGIES, Strategy, make
 
 
@@ -108,6 +108,85 @@ def optimize_params(df: pd.DataFrame, strategy_name: str,
     log = anneal(cls.default_params(), neighbor, score, steps=steps, seed=seed, verbose=verbose)
     best = cls(**log.best_state)
     return best, run_signals(df, best, fee_bps=fee_bps), log
+
+
+# ------------------------------------------------- 自由組合（任意列）退火
+
+def optimize_rows(universe: dict[str, pd.DataFrame], specs: list[dict],
+                  opt_weights: bool = True, opt_params: bool = True,
+                  objective: str = "sharpe", fee_bps: float = 10.0,
+                  steps: int = 600, seed: int = 42,
+                  verbose: bool = False) -> tuple[list[dict], Result, AnnealLog]:
+    """對使用者自由排列的組合列做退火。
+
+    specs: [{"ticker", "strategy", "params": {...}, "weight",
+             "opt_params": bool（選填，預設 True）}]
+    從使用者目前的設定出發，只調整允許調的部分：
+      opt_weights  → 各列權重
+      opt_params   → 各列策略參數（該列 opt_params 為 False 時跳過）
+    """
+    classes = [STRATEGIES[s["strategy"]] for s in specs]
+
+    init: dict = {}
+    mutable: list[str] = []
+    for i, (spec, cls) in enumerate(zip(specs, classes)):
+        wkey = f"w:{i}"
+        init[wkey] = float(spec.get("weight", 1.0))
+        if opt_weights:
+            mutable.append(wkey)
+        defaults = cls.default_params()
+        user_params = spec.get("params") or {}
+        row_opt = opt_params and spec.get("opt_params", True)
+        for k, dv in defaults.items():
+            pkey = f"p:{i}:{k}"
+            init[pkey] = user_params.get(k, dv)
+            if row_opt and k in cls.PARAM_SPACE:
+                mutable.append(pkey)
+
+    def decode(state: dict) -> list[tuple[str, Strategy, float]]:
+        rows = []
+        for i, (spec, cls) in enumerate(zip(specs, classes)):
+            params = {k: state[f"p:{i}:{k}"] for k in cls.default_params()}
+            rows.append((spec["ticker"], cls(**params), max(0.0, state[f"w:{i}"])))
+        return rows
+
+    def score(state: dict) -> float:
+        try:
+            res = run_rows(universe, decode(state), fee_bps=fee_bps)
+        except ValueError:
+            return float("-inf")
+        return objective_value(res, objective)
+
+    if not mutable:  # 沒東西可調，直接回測
+        res = run_rows(universe, decode(init), fee_bps=fee_bps)
+        log = AnnealLog(best_score=objective_value(res, objective), best_state=dict(init))
+    else:
+        def neighbor(state: dict, scale: float, rng: random.Random) -> dict:
+            nxt = dict(state)
+            key = rng.choice(mutable)
+            if key.startswith("w:"):
+                nxt[key] = min(1.0, max(0.0, state[key] + rng.uniform(-scale, scale)))
+            else:
+                _, i, pname = key.split(":", 2)
+                lo, hi, kind = classes[int(i)].PARAM_SPACE[pname]
+                nxt[key] = _perturb_param(state[key], lo, hi, kind, scale, rng)
+            return nxt
+
+        log = anneal(init, neighbor, score, steps=steps, seed=seed, verbose=verbose)
+
+    best_rows = decode(log.best_state)
+    res = run_rows(universe, best_rows, fee_bps=fee_bps)
+    total = sum(w for _, _, w in best_rows) or 1.0
+    best_specs = []
+    for (t, strat, w), spec in zip(best_rows, specs):
+        best_specs.append({
+            "ticker": t, "strategy": strat.NAME,
+            "params": {k: (round(v, 3) if isinstance(v, float) else v)
+                       for k, v in strat.params.items()},
+            "weight": round(w / total, 3),
+            "opt_params": spec.get("opt_params", True),
+        })
+    return best_specs, res, log
 
 
 # ------------------------------------------------------- 組合（參數+權重）退火

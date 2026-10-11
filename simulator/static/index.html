@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>策略模擬器</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --baseline: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --accent: #2a78d6;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --s5:#e87ba4; --s6:#008300; --s7:#6250d6; --s8:#e34948;
+  --good:#006300; --bad:#d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19;
+    --ink:#f0efec; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --baseline:#383835;
+    --border: rgba(255,255,255,0.10);
+    --accent:#3987e5;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+    --good:#0ca30c; --bad:#e66767;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 64px; }
+h1 { font-size: 22px; margin: 16px 0 4px; }
+h1 small { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; margin-top: 16px;
+}
+label { color: var(--ink-2); font-size: 13px; }
+input, select, button {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--baseline); border-radius: 8px; padding: 5px 9px;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input[type=number] { width: 86px; font-variant-numeric: tabular-nums; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary {
+  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
+}
+button.primary:disabled { opacity: .5; cursor: wait; }
+button.ghost { border-color: transparent; color: var(--ink-2); }
+button.ghost:hover { border-color: var(--baseline); }
+.bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.field { display: flex; flex-direction: column; gap: 2px; }
+table { border-collapse: collapse; width: 100%; }
+th {
+  text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
+  padding: 4px 8px; border-bottom: 1px solid var(--grid);
+}
+td { padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.params { display: flex; flex-wrap: wrap; gap: 6px; }
+.params .p { display: flex; align-items: center; gap: 4px; }
+.params .p label { font-size: 12px; }
+.params input { width: 68px; padding: 3px 6px; font-size: 13px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.tile .k { font-size: 12px; color: var(--muted); }
+.tile .v { font-size: 22px; font-weight: 650; }
+.tile .b { font-size: 12px; color: var(--ink-2); }
+.pos { color: var(--good); } .neg { color: var(--bad); }
+.chartwrap { position: relative; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 6px 0 4px; font-size: 13px; color: var(--ink-2); }
+.legend .chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.legend .chip.off { opacity: .35; }
+.legend .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.tooltip {
+  position: absolute; pointer-events: none; display: none; z-index: 5;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12.5px;
+  min-width: 150px;
+}
+.tooltip .d { color: var(--muted); margin-bottom: 4px; }
+.tooltip .r { display: flex; justify-content: space-between; gap: 14px; }
+.tooltip .r b { font-variant-numeric: tabular-nums; font-weight: 600; }
+.status { font-size: 13px; color: var(--ink-2); min-height: 1.4em; margin-top: 8px; }
+.status.err { color: var(--bad); }
+.hint { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.addrow { margin-top: 10px; }
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#annealbox { display: none; margin-top: 12px; border-top: 1px dashed var(--grid); padding-top: 10px; }
+.tickchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tickchips span {
+  font-size: 12.5px; border: 1px solid var(--baseline); border-radius: 999px;
+  padding: 2px 10px; color: var(--ink-2); font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) { .hide-sm { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>股票策略模擬器 <small>自由排列 × 回測 × 模擬退火</small></h1>
+
+  <section class="card">
+    <h2>1 · 資料</h2>
+    <div class="bar">
+      <div class="field"><label>股票代號（空白分隔，台股如 2330.TW）</label>
+        <input id="fetch-tickers" size="28" placeholder="AAPL MSFT 2330.TW"></div>
+      <div class="field"><label>期間</label>
+        <select id="fetch-period"><option>1y</option><option>2y</option><option>6mo</option><option>5y</option></select></div>
+      <button id="btn-fetch">抓取真實報價</button>
+      <button id="btn-sample">產生示範資料</button>
+    </div>
+    <div class="tickchips" id="ticker-list"></div>
+    <div class="status" id="data-status"></div>
+    <div class="hint">抓真實報價需要網路（yfinance / stooq）；也可自行把 CSV 放進 data/ 目錄。</div>
+  </section>
+
+  <section class="card">
+    <h2>2 · 自由組合</h2>
+    <table id="rows-table">
+      <thead><tr>
+        <th>股票</th><th>策略</th><th>參數</th>
+        <th class="num">權重</th><th class="hide-sm">退火調參</th><th></th>
+      </tr></thead>
+      <tbody id="rows-body"></tbody>
+    </table>
+    <div class="bar addrow">
+      <button id="btn-addrow">＋ 新增一列</button>
+      <span class="hint">同一檔股票可以重複出現、搭配不同策略；權重會自動正規化。</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3 · 執行</h2>
+    <div class="bar">
+      <div class="field"><label>交易成本 (bps)</label><input id="fee" type="number" value="10" min="0" step="1"></div>
+      <div class="field"><label>退火目標</label>
+        <select id="objective">
+          <option value="sharpe">Sharpe</option>
+          <option value="total_return">總報酬</option>
+          <option value="calmar_mix">Sharpe − 回撤懲罰</option>
+        </select></div>
+      <div class="field"><label>退火步數</label><input id="steps" type="number" value="500" min="50" step="50"></div>
+      <div class="field"><label>隨機種子</label><input id="seed" type="number" value="42" step="1"></div>
+      <label><input type="checkbox" id="opt-weights" checked> 調權重</label>
+      <label><input type="checkbox" id="opt-params" checked> 調參數</label>
+      <button class="primary" id="btn-backtest">▶ 回測</button>
+      <button class="primary" id="btn-anneal">⚒ 模擬退火</button>
+    </div>
+    <div class="status" id="run-status"></div>
+  </section>
+
+  <section class="card" id="result-card" style="display:none">
+    <h2>結果</h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="legend" id="legend"></div>
+    <div class="chartwrap">
+      <svg id="chart" width="100%" height="320" role="img" aria-label="淨值曲線"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+    <div id="annealbox">
+      <div id="anneal-note" class="hint"></div>
+      <svg id="history" width="100%" height="90" role="img" aria-label="退火收斂曲線"></svg>
+    </div>
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;color:var(--ink-2);font-size:13px">各列明細（表格）</summary>
+      <table style="margin-top:8px"><thead><tr>
+        <th>組合列</th><th class="num">權重</th><th class="num">總報酬</th>
+        <th class="num">Sharpe</th><th class="num">最大回撤</th><th class="num">交易</th>
+      </tr></thead><tbody id="rows-detail"></tbody></table>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>實驗紀錄</h2>
+    <table><thead><tr>
+      <th>時間</th><th>類型</th><th>組合</th>
+      <th class="num">總報酬</th><th class="num">Sharpe</th><th class="num">回撤</th><th></th>
+    </tr></thead><tbody id="log-body"></tbody></table>
+    <div class="bar addrow">
+      <button class="ghost" id="btn-clearlog">清空紀錄</button>
+      <span class="hint">每次回測／退火都會自動記下來（存在瀏覽器），點「載入」可還原當時的組合設定。</span>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const SLOTS = ["--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+
+let STRATS = {}, TICKERS = [], rows = [], lastPayload = null;
+
+const fmtPct = v => (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
+const fmtNum = v => v.toFixed(2);
+
+async function api(path, body) {
+  const opt = body ? { method: "POST", headers: {"Content-Type":"application/json"},
+                       body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opt);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+/* ---------- 資料區 ---------- */
+async function refreshTickers() {
+  TICKERS = await api("/api/tickers");
+  $("ticker-list").innerHTML = TICKERS.map(t =>
+    `<span>${t.ticker} · ${t.bars} 天（${t.start} ~ ${t.end}）</span>`).join("");
+  renderRows();
+}
+$("btn-sample").onclick = async () => {
+  setStatus("data-status", "產生中…");
+  try { const r = await api("/api/sample", {}); setStatus("data-status", "已產生：" + r.created.join(", ")); await refreshTickers(); }
+  catch (e) { setStatus("data-status", e.message, true); }
+};
+$("btn-fetch").onclick = async () => {
+  const ts = $("fetch-tickers").value.trim().split(/[\s,]+/).filter(Boolean);
+  if (!ts.length) return setStatus("data-status", "請先輸入股票代號", true);
+  setStatus("data-status", "抓取中…（第一次可能要幾秒）");
+  try {
+    const r = await api("/api/fetch", { tickers: ts, period: $("fetch-period").value });
+    setStatus("data-status", "完成：" + r.fetched.map(f => `${f.ticker} ${f.bars} 天`).join("、"));
+    await refreshTickers();
+  } catch (e) { setStatus("data-status", "抓取失敗（此環境可能無法連外網）：" + e.message, true); }
+};
+function setStatus(id, msg, err) { const el = $(id); el.textContent = msg; el.classList.toggle("err", !!err); }
+
+/* ---------- 組合編輯器 ---------- */
+function defaultRow() {
+  const t = TICKERS.length ? TICKERS[0].ticker : "";
+  const s = "macd";
+  return { ticker: t, strategy: s, params: { ...defaults(s) }, weight: 1, opt_params: true };
+}
+const defaults = s => Object.fromEntries(Object.entries(STRATS[s].params).map(([k, p]) => [k, p.default]));
+
+function renderRows() {
+  const tb = $("rows-body");
+  tb.innerHTML = "";
+  rows.forEach((row, i) => {
+    const tr = document.createElement("tr");
+
+    const tdT = document.createElement("td");
+    const selT = document.createElement("select");
+    TICKERS.forEach(t => selT.add(new Option(t.ticker, t.ticker)));
+    selT.value = row.ticker;
+    selT.onchange = () => { row.ticker = selT.value; };
+    tdT.append(selT);
+
+    const tdS = document.createElement("td");
+    const selS = document.createElement("select");
+    Object.keys(STRATS).forEach(n => selS.add(new Option(n, n)));
+    selS.value = row.strategy;
+    selS.title = STRATS[row.strategy].doc;
+    selS.onchange = () => { row.strategy = selS.value; row.params = { ...defaults(selS.value) }; renderRows(); };
+    tdS.append(selS);
+
+    const tdP = document.createElement("td");
+    const wrap = document.createElement("div"); wrap.className = "params";
+    const space = STRATS[row.strategy].params;
+    if (!Object.keys(space).length) wrap.innerHTML = '<span class="hint">（無參數）</span>';
+    Object.entries(space).forEach(([k, p]) => {
+      const d = document.createElement("span"); d.className = "p";
+      const lab = document.createElement("label"); lab.textContent = k;
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.min = p.lo; inp.max = p.hi;
+      inp.step = p.kind === "int" ? 1 : 0.05;
+      inp.value = row.params[k] ?? p.default;
+      inp.title = `${p.lo} ~ ${p.hi}`;
+      inp.onchange = () => { row.params[k] = p.kind === "int" ? parseInt(inp.value) : parseFloat(inp.value); };
+      d.append(lab, inp); wrap.append(d);
+    });
+    tdP.append(wrap);
+
+    const tdW = document.createElement("td"); tdW.className = "num";
+    const inW = document.createElement("input");
+    inW.type = "number"; inW.min = 0; inW.step = 0.05; inW.value = row.weight;
+    inW.onchange = () => { row.weight = parseFloat(inW.value) || 0; };
+    tdW.append(inW);
+
+    const tdO = document.createElement("td"); tdO.className = "hide-sm";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = row.opt_params;
+    cb.onchange = () => { row.opt_params = cb.checked; };
+    tdO.append(cb);
+
+    const tdA = document.createElement("td");
+    const bD = document.createElement("button"); bD.className = "ghost"; bD.textContent = "複製";
+    bD.onclick = () => { rows.splice(i + 1, 0, JSON.parse(JSON.stringify(row))); renderRows(); };
+    const bX = document.createElement("button"); bX.className = "ghost"; bX.textContent = "✕";
+    bX.title = "刪除";
+    bX.onclick = () => { rows.splice(i, 1); renderRows(); };
+    tdA.append(bD, bX);
+
+    tr.append(tdT, tdS, tdP, tdW, tdO, tdA);
+    tb.append(tr);
+  });
+}
+$("btn-addrow").onclick = () => { rows.push(defaultRow()); renderRows(); };
+
+/* ---------- 執行 ---------- */
+function config() {
+  return {
+    rows: rows.map(r => ({ ticker: r.ticker, strategy: r.strategy,
+                           params: r.params, weight: r.weight, opt_params: r.opt_params })),
+    fee_bps: parseFloat($("fee").value) || 0,
+    objective: $("objective").value,
+    steps: parseInt($("steps").value) || 500,
+    seed: parseInt($("seed").value) || 42,
+    opt_weights: $("opt-weights").checked,
+    opt_params: $("opt-params").checked,
+  };
+}
+async function run(kind) {
+  if (!rows.length) return setStatus("run-status", "請先在「自由組合」新增至少一列", true);
+  const btns = [$("btn-backtest"), $("btn-anneal")];
+  btns.forEach(b => b.disabled = true);
+  setStatus("run-status", kind === "anneal"
+    ? "退火中…（步數越多越久，請稍候）" : "回測中…");
+  try {
+    const cfg = config();
+    const payload = await api(kind === "anneal" ? "/api/anneal" : "/api/backtest", cfg);
+    if (kind === "anneal" && payload.best_rows) {
+      rows = payload.best_rows.map(r => ({ ...r, params: { ...r.params } }));
+      renderRows();
+    }
+    renderResult(payload, kind);
+    addLog(kind, cfg, payload);
+    setStatus("run-status", kind === "anneal"
+      ? "退火完成，最佳參數與權重已套回上方表格。" : "回測完成。");
+  } catch (e) { setStatus("run-status", e.message, true); }
+  btns.forEach(b => b.disabled = false);
+}
+$("btn-backtest").onclick = () => run("backtest");
+$("btn-anneal").onclick = () => run("anneal");
+
+/* ---------- 結果呈現 ---------- */
+function tile(k, v, cls, sub) {
+  return `<div class="tile"><div class="k">${k}</div><div class="v ${cls||""}">${v}</div>${sub?`<div class="b">${sub}</div>`:""}</div>`;
+}
+function renderResult(p, kind) {
+  lastPayload = p;
+  $("result-card").style.display = "";
+  const s = p.summary, b = p.benchmark_summary;
+  $("tiles").innerHTML =
+    tile("總報酬", fmtPct(s.total_return), s.total_return >= 0 ? "pos" : "neg",
+         `基準 ${fmtPct(b.total_return)}`) +
+    tile("CAGR", fmtPct(s.cagr), s.cagr >= 0 ? "pos" : "neg") +
+    tile("Sharpe", fmtNum(s.sharpe), "", `基準 ${fmtNum(b.sharpe)}`) +
+    tile("最大回撤", fmtPct(s.max_drawdown), "neg", `基準 ${fmtPct(b.max_drawdown)}`) +
+    tile("交易次數", s.trades, "");
+
+  const series = [
+    { label: "組合", color: css("--s1"), values: p.portfolio, width: 2.5, on: true },
+    { label: "基準（等權買進持有）", color: css("--muted"), values: p.benchmark, dash: "5 4", on: true },
+    ...p.rows.map((r, i) => ({
+      label: r.label, color: i < SLOTS.length ? css(SLOTS[i]) : css("--baseline"),
+      values: r.equity, on: false,
+    })),
+  ];
+  drawChart(series, p.dates);
+
+  $("rows-detail").innerHTML = p.rows.map(r => {
+    const rs = r.summary;
+    return `<tr><td>${r.label}</td><td class="num">${(r.weight*100).toFixed(1)}%</td>
+      <td class="num ${rs.total_return>=0?"pos":"neg"}">${fmtPct(rs.total_return)}</td>
+      <td class="num">${fmtNum(rs.sharpe)}</td>
+      <td class="num">${fmtPct(rs.max_drawdown)}</td><td class="num">${rs.trades}</td></tr>`;
+  }).join("");
+
+  const box = $("annealbox");
+  if (kind === "anneal" && p.history) {
+    box.style.display = "block";
+    $("anneal-note").textContent =
+      `退火收斂：最佳${$("objective").selectedOptions[0].text} = ${p.best_score}（由左到右為退火步數）`;
+    drawHistory(p.history);
+  } else box.style.display = "none";
+}
+
+/* ---------- SVG 折線圖 ---------- */
+let chartState = null;
+function drawChart(series, dates) {
+  const svg = $("chart");
+  const W = svg.clientWidth || 1000, H = 320, L = 52, R = 14, T = 12, B = 28;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const on = series.filter(sr => sr.on);
+  if (!on.length) { svg.innerHTML = ""; chartState = null; renderLegend(series, dates); return; }
+  const all = on.flatMap(sr => sr.values);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  if (hi - lo < 1e-9) { hi = lo + 1; }
+  const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+  const x = i => L + (W - L - R) * (dates.length < 2 ? 0 : i / (dates.length - 1));
+  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  let g = "";
+  const nTicks = 5;
+  for (let k = 0; k <= nTicks; k++) {
+    const v = lo + (hi - lo) * k / nTicks, yy = y(v);
+    g += `<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="${css("--grid")}" stroke-width="1"/>`;
+    g += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${v.toFixed(2)}</text>`;
+  }
+  const nx = Math.min(6, dates.length);
+  for (let k = 0; k < nx; k++) {
+    const i = Math.round(k * (dates.length - 1) / Math.max(1, nx - 1));
+    g += `<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="${css("--muted")}">${dates[i]?.slice(5) ?? ""}</text>`;
+  }
+  g += `<line x1="${L}" y1="${y(1)}" x2="${W-R}" y2="${y(1)}" stroke="${css("--baseline")}" stroke-width="1"/>`;
+  on.forEach(sr => {
+    const pts = sr.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    g += `<polyline points="${pts}" fill="none" stroke="${sr.color}" stroke-width="${sr.width||2}"
+          ${sr.dash ? `stroke-dasharray="${sr.dash}"` : ""} stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  if (on.length <= 4) {  // 少量序列時加上線尾直接標示
+    on.forEach(sr => {
+      const i = sr.values.length - 1, yy = y(sr.values[i]);
+      g += `<circle cx="${x(i)}" cy="${yy}" r="3.5" fill="${sr.color}"/>`;
+    });
+  }
+  g += `<line id="xh" x1="0" y1="${T}" x2="0" y2="${H-B}" stroke="${css("--baseline")}" stroke-width="1" visibility="hidden"/>`;
+  svg.innerHTML = g;
+  chartState = { series: on, dates, x, y, L, R, W, H, T, B };
+  renderLegend(series, dates);
+}
+function renderLegend(series, dates) {
+  const lg = $("legend");
+  lg.innerHTML = "";
+  series.forEach(sr => {
+    const chip = document.createElement("span");
+    chip.className = "chip" + (sr.on ? "" : " off");
+    chip.innerHTML = `<span class="sw" style="background:${sr.color}"></span>${sr.label}`;
+    chip.onclick = () => { sr.on = !sr.on; drawChart(series, dates); };
+    lg.append(chip);
+  });
+}
+$("chart").addEventListener("mousemove", ev => {
+  if (!chartState) return;
+  const st = chartState, rect = $("chart").getBoundingClientRect();
+  const px = (ev.clientX - rect.left) * (st.W / rect.width);
+  const n = st.dates.length;
+  const i = Math.max(0, Math.min(n - 1,
+    Math.round((px - st.L) / (st.W - st.L - st.R) * (n - 1))));
+  const xh = $("chart").querySelector("#xh");
+  if (xh) { xh.setAttribute("x1", st.x(i)); xh.setAttribute("x2", st.x(i)); xh.setAttribute("visibility", "visible"); }
+  const tt = $("tooltip");
+  tt.style.display = "block";
+  tt.innerHTML = `<div class="d">${st.dates[i]}</div>` + st.series.map(sr =>
+    `<div class="r"><span><span class="sw" style="display:inline-block;width:10px;height:3px;border-radius:2px;background:${sr.color};margin-right:5px"></span>${sr.label}</span><b>${sr.values[i].toFixed(3)}</b></div>`).join("");
+  const wrap = $("chart").parentElement.getBoundingClientRect();
+  let tx = ev.clientX - wrap.left + 14;
+  if (tx + 190 > wrap.width) tx = ev.clientX - wrap.left - 190;
+  tt.style.left = tx + "px";
+  tt.style.top = Math.max(0, ev.clientY - wrap.top - 20) + "px";
+});
+$("chart").addEventListener("mouseleave", () => {
+  $("tooltip").style.display = "none";
+  const xh = $("chart").querySelector("#xh");
+  if (xh) xh.setAttribute("visibility", "hidden");
+});
+
+function drawHistory(hist) {
+  const svg = $("history");
+  const W = svg.clientWidth || 1000, H = 90, L = 52, R = 14, T = 8, B = 6;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const xs = hist.map(h => h[0]), ys = hist.map(h => h[2]);
+  let lo = Math.min(...ys), hi = Math.max(...ys);
+  if (hi - lo < 1e-9) hi = lo + 1;
+  const x = v => L + (W - L - R) * (v - xs[0]) / Math.max(1, xs[xs.length-1] - xs[0]);
+  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+  const pts = hist.map(h => `${x(h[0]).toFixed(1)},${y(h[2]).toFixed(1)}`).join(" ");
+  svg.innerHTML =
+    `<text x="${L-8}" y="${y(hi)+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${hi.toFixed(2)}</text>` +
+    `<text x="${L-8}" y="${y(lo)+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${lo.toFixed(2)}</text>` +
+    `<polyline points="${pts}" fill="none" stroke="${css("--s1")}" stroke-width="2" stroke-linejoin="round"/>`;
+}
+
+/* ---------- 實驗紀錄 ---------- */
+const LOG_KEY = "sim_experiments";
+const loadLog = () => { try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; } catch { return []; } };
+const saveLog = l => { try { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(-60))); } catch {} };
+function rowLabel(cfg) {
+  return cfg.rows.map(r => `${r.ticker}·${r.strategy}`).join(" + ");
+}
+function addLog(kind, cfg, payload) {
+  const l = loadLog();
+  l.push({ time: new Date().toLocaleString("zh-TW", { hour12: false }),
+           kind, label: rowLabel(config()), summary: payload.summary, config: config() });
+  saveLog(l); renderLog();
+}
+function renderLog() {
+  const l = loadLog().slice().reverse();
+  $("log-body").innerHTML = l.map((e, ri) => {
+    const s = e.summary;
+    return `<tr><td>${e.time}</td><td>${e.kind === "anneal" ? "退火" : "回測"}</td>
+      <td>${e.label}</td>
+      <td class="num ${s.total_return>=0?"pos":"neg"}">${fmtPct(s.total_return)}</td>
+      <td class="num">${fmtNum(s.sharpe)}</td>
+      <td class="num">${fmtPct(s.max_drawdown)}</td>
+      <td><button class="ghost" data-i="${ri}">載入</button></td></tr>`;
+  }).join("");
+  $("log-body").querySelectorAll("button").forEach(b => b.onclick = () => {
+    const e = loadLog().slice().reverse()[parseInt(b.dataset.i)];
+    if (!e) return;
+    const c = e.config;
+    rows = c.rows.map(r => ({ ...r, params: { ...r.params } }));
+    $("fee").value = c.fee_bps; $("objective").value = c.objective;
+    $("steps").value = c.steps; $("seed").value = c.seed;
+    $("opt-weights").checked = c.opt_weights; $("opt-params").checked = c.opt_params;
+    renderRows();
+    setStatus("run-status", `已載入 ${e.time} 的組合設定。`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  });
+}
+$("btn-clearlog").onclick = () => { saveLog([]); renderLog(); };
+
+/* ---------- 啟動 ---------- */
+(async function init() {
+  STRATS = await api("/api/strategies");
+  await refreshTickers();
+  if (TICKERS.length) {
+    rows = [defaultRow()];
+    if (TICKERS.length > 1) rows.push({ ...defaultRow(), ticker: TICKERS[1].ticker,
+      strategy: "boll_mr", params: { ...defaults("boll_mr") } });
+    renderRows();
+  }
+  renderLog();
+})();
+window.addEventListener("resize", () => {
+  if (lastPayload && $("result-card").style.display !== "none" && chartState) {
+    // 重新繪製以符合新寬度
+    const p = lastPayload;
+    renderResult(p, $("annealbox").style.display === "block" ? "anneal" : "backtest");
+  }
+});
+</script>
+</body>
+</html>
