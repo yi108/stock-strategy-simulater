@@ -61,6 +61,28 @@ def close_matrix(universe: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return mat.sort_index()
 
 
+def align_universe(universe: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """把多個 ticker 的日 K 對齊到共同交易日（交集），方便滾動切片。"""
+    if not universe:
+        return {}
+    common = None
+    for df in universe.values():
+        s = set(df["date"])
+        common = s if common is None else common & s
+    common = sorted(common)
+    out = {}
+    for t, df in universe.items():
+        sub = df[df["date"].isin(common)].sort_values("date").reset_index(drop=True)
+        out[t] = sub
+    return out
+
+
+def slice_universe(universe: dict[str, pd.DataFrame],
+                   lo: int | None = None, hi: int | None = None) -> dict[str, pd.DataFrame]:
+    """對「已對齊」的 universe 以列位置切片（iloc 語意）。"""
+    return {t: df.iloc[lo:hi].reset_index(drop=True) for t, df in universe.items()}
+
+
 # ---------------------------------------------------------------- 真實資料抓取
 # 注意：需要可以連外網的環境（例如你自己的電腦）。
 

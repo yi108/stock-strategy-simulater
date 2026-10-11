@@ -15,6 +15,7 @@
   --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
   --s5:#e87ba4; --s6:#008300; --s7:#6250d6; --s8:#e34948;
   --good:#006300; --bad:#d03b3b;
+  --shade: rgba(42,120,214,0.07);
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -27,6 +28,7 @@
     --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
     --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
     --good:#0ca30c; --bad:#e66767;
+    --shade: rgba(57,135,229,0.12);
   }
 }
 * { box-sizing: border-box; }
@@ -34,10 +36,11 @@ body {
   margin: 0; background: var(--page); color: var(--ink);
   font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-main { max-width: 1100px; margin: 0 auto; padding: 16px 16px 64px; }
+main { max-width: 1120px; margin: 0 auto; padding: 16px 16px 64px; }
 h1 { font-size: 22px; margin: 16px 0 4px; }
 h1 small { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
 h2 { font-size: 16px; margin: 0 0 12px; }
+h3 { font-size: 14px; margin: 14px 0 6px; color: var(--ink-2); }
 .card {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; padding: 16px; margin-top: 16px;
@@ -48,44 +51,41 @@ input, select, button {
   border: 1px solid var(--baseline); border-radius: 8px; padding: 5px 9px;
 }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-input[type=number] { width: 86px; font-variant-numeric: tabular-nums; }
+input[type=number] { width: 84px; font-variant-numeric: tabular-nums; }
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
-button.primary {
-  background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600;
-}
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
 button.primary:disabled { opacity: .5; cursor: wait; }
 button.ghost { border-color: transparent; color: var(--ink-2); }
 button.ghost:hover { border-color: var(--baseline); }
+button.danger { color: var(--bad); }
 .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .field { display: flex; flex-direction: column; gap: 2px; }
 table { border-collapse: collapse; width: 100%; }
-th {
-  text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
-  padding: 4px 8px; border-bottom: 1px solid var(--grid);
-}
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
+     padding: 4px 8px; border-bottom: 1px solid var(--grid); }
 td { padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.params { display: flex; flex-wrap: wrap; gap: 6px; }
+.params { display: flex; flex-wrap: wrap; gap: 6px; max-width: 560px; }
 .params .p { display: flex; align-items: center; gap: 4px; }
 .params .p label { font-size: 12px; }
-.params input { width: 68px; padding: 3px 6px; font-size: 13px; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.params input { width: 64px; padding: 3px 6px; font-size: 13px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .tile .k { font-size: 12px; color: var(--muted); }
-.tile .v { font-size: 22px; font-weight: 650; }
+.tile .v { font-size: 21px; font-weight: 650; }
 .tile .b { font-size: 12px; color: var(--ink-2); }
+.tile.hl { border-color: var(--accent); }
 .pos { color: var(--good); } .neg { color: var(--bad); }
 .chartwrap { position: relative; }
 .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 6px 0 4px; font-size: 13px; color: var(--ink-2); }
 .legend .chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
 .legend .chip.off { opacity: .35; }
-.legend .sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.sw { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
 .tooltip {
   position: absolute; pointer-events: none; display: none; z-index: 5;
   background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12.5px;
-  min-width: 150px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12.5px; min-width: 150px;
 }
 .tooltip .d { color: var(--muted); margin-bottom: 4px; }
 .tooltip .r { display: flex; justify-content: space-between; gap: 14px; }
@@ -94,20 +94,24 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .status.err { color: var(--bad); }
 .hint { font-size: 12.5px; color: var(--muted); margin-top: 8px; }
 .addrow { margin-top: 10px; }
-.spin { display: inline-block; animation: spin 1s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-#annealbox { display: none; margin-top: 12px; border-top: 1px dashed var(--grid); padding-top: 10px; }
+.progress { display: none; margin-top: 10px; }
+.progress .track { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.progress .fill { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.progress .info { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--ink-2); margin-top: 4px; }
 .tickchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.tickchips span {
-  font-size: 12.5px; border: 1px solid var(--baseline); border-radius: 999px;
-  padding: 2px 10px; color: var(--ink-2); font-variant-numeric: tabular-nums;
-}
+.tickchips span { font-size: 12.5px; border: 1px solid var(--baseline); border-radius: 999px;
+  padding: 2px 10px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+.seglist td { font-size: 13px; }
+#annealbox { display: none; margin-top: 12px; border-top: 1px dashed var(--grid); padding-top: 10px; }
 @media (max-width: 720px) { .hide-sm { display: none; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>股票策略模擬器 <small>自由排列 × 回測 × 模擬退火</small></h1>
+  <h1>股票策略模擬器 <small>自由排列 × 回測 × 模擬退火 × 樣本外驗證</small></h1>
 
   <section class="card">
     <h2>1 · 資料</h2>
@@ -121,12 +125,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     </div>
     <div class="tickchips" id="ticker-list"></div>
     <div class="status" id="data-status"></div>
-    <div class="hint">抓真實報價需要網路（yfinance / stooq）；也可自行把 CSV 放進 data/ 目錄。</div>
   </section>
 
   <section class="card">
     <h2>2 · 自由組合</h2>
-    <table id="rows-table">
+    <table>
       <thead><tr>
         <th>股票</th><th>策略</th><th>參數</th>
         <th class="num">權重</th><th class="hide-sm">退火調參</th><th></th>
@@ -135,14 +138,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     </table>
     <div class="bar addrow">
       <button id="btn-addrow">＋ 新增一列</button>
-      <span class="hint">同一檔股票可以重複出現、搭配不同策略；權重會自動正規化。</span>
+      <span class="hint">同一檔股票可重複出現配不同策略。sl_pct/tp_pct = 停損/停利（0 關閉）、short=1 允許做空。</span>
     </div>
   </section>
 
   <section class="card">
     <h2>3 · 執行</h2>
     <div class="bar">
-      <div class="field"><label>交易成本 (bps)</label><input id="fee" type="number" value="10" min="0" step="1"></div>
+      <div class="field"><label>手續費 (bps)</label><input id="fee" type="number" value="10" min="0" step="1"></div>
+      <div class="field"><label>滑價 (bps)</label><input id="slippage" type="number" value="5" min="0" step="1"></div>
+      <div class="field"><label>波動率目標（0 關閉）</label><input id="vol-target" type="number" value="0" min="0" step="0.05"></div>
+      <div class="field"><label>訓練／驗證切分</label>
+        <select id="train-frac">
+          <option value="1">不切分</option>
+          <option value="0.8">訓練 80% / 驗證 20%</option>
+          <option value="0.7" selected>訓練 70% / 驗證 30%</option>
+          <option value="0.6">訓練 60% / 驗證 40%</option>
+        </select></div>
       <div class="field"><label>退火目標</label>
         <select id="objective">
           <option value="sharpe">Sharpe</option>
@@ -150,45 +162,143 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
           <option value="calmar_mix">Sharpe − 回撤懲罰</option>
         </select></div>
       <div class="field"><label>退火步數</label><input id="steps" type="number" value="500" min="50" step="50"></div>
+      <div class="field"><label>重啟次數</label><input id="restarts" type="number" value="3" min="1" max="10" step="1"></div>
       <div class="field"><label>隨機種子</label><input id="seed" type="number" value="42" step="1"></div>
       <label><input type="checkbox" id="opt-weights" checked> 調權重</label>
       <label><input type="checkbox" id="opt-params" checked> 調參數</label>
       <button class="primary" id="btn-backtest">▶ 回測</button>
       <button class="primary" id="btn-anneal">⚒ 模擬退火</button>
     </div>
+    <div class="progress" id="prog">
+      <div class="track"><div class="fill" id="prog-fill"></div></div>
+      <div class="info"><span id="prog-text"></span>
+        <span>目前最佳 <b id="prog-best">—</b>
+          <button class="ghost danger" id="btn-stop">■ 停止</button></span></div>
+      <svg id="prog-spark" width="100%" height="56"></svg>
+    </div>
     <div class="status" id="run-status"></div>
+    <div class="hint">退火只在「訓練期」評分；驗證期是它沒看過的資料。訓練好、驗證爛 = 過擬合。</div>
   </section>
 
   <section class="card" id="result-card" style="display:none">
     <h2>結果</h2>
     <div class="tiles" id="tiles"></div>
+    <div class="tiles" id="split-tiles"></div>
     <div class="legend" id="legend"></div>
     <div class="chartwrap">
-      <svg id="chart" width="100%" height="320" role="img" aria-label="淨值曲線"></svg>
-      <div class="tooltip" id="tooltip"></div>
+      <svg id="chart" width="100%" height="300" role="img" aria-label="淨值曲線"></svg>
+      <div class="tooltip" id="chart-tt"></div>
+    </div>
+    <h3>回撤</h3>
+    <div class="chartwrap">
+      <svg id="ddchart" width="100%" height="110" role="img" aria-label="回撤曲線"></svg>
+      <div class="tooltip" id="ddchart-tt"></div>
     </div>
     <div id="annealbox">
       <div id="anneal-note" class="hint"></div>
-      <svg id="history" width="100%" height="90" role="img" aria-label="退火收斂曲線"></svg>
+      <svg id="history" width="100%" height="80" role="img" aria-label="退火收斂曲線"></svg>
     </div>
     <details style="margin-top:10px">
-      <summary style="cursor:pointer;color:var(--ink-2);font-size:13px">各列明細（表格）</summary>
-      <table style="margin-top:8px"><thead><tr>
-        <th>組合列</th><th class="num">權重</th><th class="num">總報酬</th>
-        <th class="num">Sharpe</th><th class="num">最大回撤</th><th class="num">交易</th>
-      </tr></thead><tbody id="rows-detail"></tbody></table>
+      <summary>各列明細與交易紀錄</summary>
+      <div id="rows-detail"></div>
     </details>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Walk-Forward 滾動驗證</h2>
+      <div class="bar">
+        <div class="field"><label>訓練窗（天）</label><input id="wf-train" type="number" value="126" min="40" step="7"></div>
+        <div class="field"><label>驗證窗（天）</label><input id="wf-test" type="number" value="21" min="5" step="7"></div>
+        <div class="field"><label>每段步數</label><input id="wf-steps" type="number" value="120" min="20" step="20"></div>
+        <button class="primary" id="btn-wf">執行</button>
+      </div>
+      <div class="progress" id="wf-prog">
+        <div class="track"><div class="fill" id="wf-prog-fill"></div></div>
+        <div class="info"><span id="wf-prog-text"></span>
+          <button class="ghost danger" id="btn-wf-stop">■ 停止</button></div>
+      </div>
+      <div class="status" id="wf-status"></div>
+      <div id="wf-result" style="display:none">
+        <div class="tiles" id="wf-tiles"></div>
+        <div class="legend" id="wf-legend"></div>
+        <div class="chartwrap">
+          <svg id="wf-chart" width="100%" height="220"></svg>
+          <div class="tooltip" id="wf-chart-tt"></div>
+        </div>
+        <details style="margin-top:8px"><summary>各區段</summary>
+          <table class="seglist"><thead><tr>
+            <th>驗證期間</th><th class="num">訓練分數</th><th class="num">樣本外報酬</th><th>權重</th>
+          </tr></thead><tbody id="wf-segs"></tbody></table>
+        </details>
+      </div>
+      <div class="hint">每段只用「當段之前」的資料退火，套到下一段沒看過的資料，拼出樣本外淨值——最接近實際操作的測法。</div>
+    </section>
+
+    <section class="card">
+      <h2>參數穩健性熱圖</h2>
+      <div class="bar">
+        <div class="field"><label>組合列</label><select id="scan-row"></select></div>
+        <div class="field"><label>參數 X</label><select id="scan-px"></select></div>
+        <div class="field"><label>參數 Y</label><select id="scan-py"></select></div>
+        <button class="primary" id="btn-scan">掃描</button>
+      </div>
+      <div class="status" id="scan-status"></div>
+      <div id="scan-result" style="display:none">
+        <svg id="scan-chart" width="100%" height="300"></svg>
+        <div class="hint" id="scan-note"></div>
+      </div>
+      <div class="hint">好的參數應該是一整片高原；孤立的尖峰是過擬合警訊。點熱圖可把該組參數套回組合列。</div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>動量輪動（橫斷面排名）</h2>
+    <div class="bar">
+      <div class="field"><label>標的池（至少 2 檔）</label><div class="bar" id="rot-tickers" style="gap:8px"></div></div>
+    </div>
+    <div class="bar" style="margin-top:8px">
+      <div class="field"><label>動量回看（天）</label><input id="rot-lookback" type="number" value="126" min="20" step="7"></div>
+      <div class="field"><label>持有檔數</label><input id="rot-topn" type="number" value="2" min="1" step="1"></div>
+      <div class="field"><label>再平衡週期（天）</label><input id="rot-reb" type="number" value="21" min="5" step="1"></div>
+      <button class="primary" id="btn-rot">▶ 回測</button>
+      <button class="primary" id="btn-rot-anneal">⚒ 退火</button>
+    </div>
+    <div class="progress" id="rot-prog">
+      <div class="track"><div class="fill" id="rot-prog-fill"></div></div>
+      <div class="info"><span id="rot-prog-text"></span>
+        <button class="ghost danger" id="btn-rot-stop">■ 停止</button></div>
+    </div>
+    <div class="status" id="rot-status"></div>
+    <div id="rot-result" style="display:none">
+      <div class="tiles" id="rot-tiles"></div>
+      <div class="legend" id="rot-legend"></div>
+      <div class="chartwrap">
+        <svg id="rot-chart" width="100%" height="220"></svg>
+        <div class="tooltip" id="rot-chart-tt"></div>
+      </div>
+      <div class="hint" id="rot-holdings"></div>
+    </div>
   </section>
 
   <section class="card">
     <h2>實驗紀錄</h2>
     <table><thead><tr>
-      <th>時間</th><th>類型</th><th>組合</th>
+      <th></th><th>時間</th><th>類型</th><th>組合</th>
       <th class="num">總報酬</th><th class="num">Sharpe</th><th class="num">回撤</th><th></th>
     </tr></thead><tbody id="log-body"></tbody></table>
     <div class="bar addrow">
-      <button class="ghost" id="btn-clearlog">清空紀錄</button>
-      <span class="hint">每次回測／退火都會自動記下來（存在瀏覽器），點「載入」可還原當時的組合設定。</span>
+      <button id="btn-compare">疊圖比較勾選的實驗</button>
+      <button class="ghost" id="btn-export">匯出 JSON</button>
+      <button class="ghost" id="btn-import">匯入 JSON</button>
+      <input type="file" id="import-file" accept=".json" style="display:none">
+      <button class="ghost danger" id="btn-clearlog">清空</button>
+      <span class="hint">每次執行自動記錄（存在瀏覽器）。「載入」還原設定；勾選多筆可疊圖比較淨值。</span>
+    </div>
+    <div class="legend" id="cmp-legend"></div>
+    <div class="chartwrap" id="cmp-wrap" style="display:none">
+      <svg id="cmp-chart" width="100%" height="240"></svg>
+      <div class="tooltip" id="cmp-chart-tt"></div>
     </div>
   </section>
 </main>
@@ -197,12 +307,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 "use strict";
 const $ = id => document.getElementById(id);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const SLOTS = ["--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+const SLOTS = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+const slot = i => i < SLOTS.length ? css(SLOTS[i]) : css("--baseline");
+const RAMP = ["#cde2fb","#b7d3f6","#9ec5f4","#86b6ef","#6da7ec","#5598e7","#3987e5","#2a78d6","#256abf","#1c5cab","#184f95","#104281","#0d366b"];
+const isDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
 
-let STRATS = {}, TICKERS = [], rows = [], lastPayload = null;
-
+let STRATS = {}, TICKERS = [], rows = [];
 const fmtPct = v => (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%";
 const fmtNum = v => v.toFixed(2);
+const setStatus = (id, msg, err) => { const el = $(id); el.textContent = msg || ""; el.classList.toggle("err", !!err); };
 
 async function api(path, body) {
   const opt = body ? { method: "POST", headers: {"Content-Type":"application/json"},
@@ -213,12 +326,148 @@ async function api(path, body) {
   return j;
 }
 
+/* ---------- 可重用折線圖（含十字游標 tooltip、驗證期底色） ---------- */
+function makeChart(svgId) {
+  const svg = $(svgId), tt = $(svgId + "-tt");
+  const st = { series: [], dates: [], x: null, W: 0, L: 0, R: 0 };
+  function draw(series, dates, opts = {}) {
+    const on = series.filter(s => s.on !== false);
+    const W = svg.clientWidth || 1000, H = svg.getAttribute("height") * 1,
+          L = 52, R = 14, T = 10, B = opts.noXLabels ? 8 : 26;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    if (!on.length || !dates.length) { svg.innerHTML = ""; st.series = []; return; }
+    const all = on.flatMap(s => s.values);
+    let lo = Math.min(...all), hi = Math.max(...all);
+    if (hi - lo < 1e-9) hi = lo + 1;
+    const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+    const x = i => L + (W - L - R) * (dates.length < 2 ? 0 : i / (dates.length - 1));
+    const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+    let g = "";
+    if (opts.shadeFrom != null && opts.shadeFrom < dates.length) {
+      g += `<rect x="${x(opts.shadeFrom)}" y="${T}" width="${W - R - x(opts.shadeFrom)}" height="${H - T - B}" fill="${css("--shade")}"/>`;
+      g += `<text x="${x(opts.shadeFrom) + 6}" y="${T + 14}" font-size="11" fill="${css("--muted")}">驗證期 →</text>`;
+    }
+    for (let k = 0; k <= 4; k++) {
+      const v = lo + (hi - lo) * k / 4, yy = y(v);
+      g += `<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="${css("--grid")}"/>`;
+      g += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${opts.pct ? (v*100).toFixed(0)+"%" : v.toFixed(2)}</text>`;
+    }
+    if (!opts.noXLabels) {
+      const nx = Math.min(6, dates.length);
+      for (let k = 0; k < nx; k++) {
+        const i = Math.round(k * (dates.length - 1) / Math.max(1, nx - 1));
+        g += `<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="${css("--muted")}">${(dates[i]||"").slice(5)}</text>`;
+      }
+    }
+    const base = opts.baseline != null ? opts.baseline : null;
+    if (base != null && base >= lo && base <= hi)
+      g += `<line x1="${L}" y1="${y(base)}" x2="${W-R}" y2="${y(base)}" stroke="${css("--baseline")}"/>`;
+    on.forEach(s => {
+      const pts = s.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+      if (s.area) {
+        const b = y(base != null ? base : lo);
+        g += `<polygon points="${x(0).toFixed(1)},${b} ${pts.join(" ")} ${x(s.values.length-1).toFixed(1)},${b}" fill="${s.color}" fill-opacity="0.22" stroke="none"/>`;
+      }
+      g += `<polyline points="${pts.join(" ")}" fill="none" stroke="${s.color}" stroke-width="${s.width||2}" ${s.dash?`stroke-dasharray="${s.dash}"`:""} stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+    if (on.length <= 4)
+      on.forEach(s => { g += `<circle cx="${x(s.values.length-1)}" cy="${y(s.values[s.values.length-1])}" r="3.5" fill="${s.color}"/>`; });
+    g += `<line class="xh" x1="0" y1="${T}" x2="0" y2="${H-B}" stroke="${css("--baseline")}" visibility="hidden"/>`;
+    svg.innerHTML = g;
+    Object.assign(st, { series: on, dates, x, W, L, R, pct: opts.pct });
+  }
+  svg.addEventListener("mousemove", ev => {
+    if (!st.series.length || !tt) return;
+    const rect = svg.getBoundingClientRect();
+    const px = (ev.clientX - rect.left) * (st.W / rect.width);
+    const n = st.dates.length;
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - st.L) / (st.W - st.L - st.R) * (n - 1))));
+    const xh = svg.querySelector(".xh");
+    if (xh) { xh.setAttribute("x1", st.x(i)); xh.setAttribute("x2", st.x(i)); xh.setAttribute("visibility", "visible"); }
+    tt.style.display = "block";
+    tt.innerHTML = `<div class="d">${st.dates[i]}</div>` + st.series.map(s =>
+      `<div class="r"><span><span class="sw" style="background:${s.color};width:10px"></span> ${s.label}</span><b>${st.pct ? (s.values[i]*100).toFixed(1)+"%" : s.values[i].toFixed(3)}</b></div>`).join("");
+    const wrap = svg.parentElement.getBoundingClientRect();
+    let tx = ev.clientX - wrap.left + 14;
+    if (tx + 195 > wrap.width) tx = ev.clientX - wrap.left - 195;
+    tt.style.left = tx + "px";
+    tt.style.top = Math.max(0, ev.clientY - wrap.top - 20) + "px";
+  });
+  svg.addEventListener("mouseleave", () => {
+    if (tt) tt.style.display = "none";
+    const xh = svg.querySelector(".xh");
+    if (xh) xh.setAttribute("visibility", "hidden");
+  });
+  return { draw };
+}
+function renderLegend(elId, series, redraw) {
+  const lg = $(elId); lg.innerHTML = "";
+  series.forEach(s => {
+    const chip = document.createElement("span");
+    chip.className = "chip" + (s.on === false ? " off" : "");
+    chip.innerHTML = `<span class="sw" style="background:${s.color}"></span>${s.label}`;
+    chip.onclick = () => { s.on = s.on === false; redraw(); };
+    lg.append(chip);
+  });
+}
+const eqChart = makeChart("chart"), ddChart = makeChart("ddchart"),
+      wfChart = makeChart("wf-chart"), rotChart = makeChart("rot-chart"),
+      cmpChart = makeChart("cmp-chart");
+
+/* ---------- 背景工作輪詢 ---------- */
+let activeJob = null;
+async function runJob(path, body, ui) {
+  const { job } = await api(path, body);
+  activeJob = job;
+  ui.show(true);
+  try {
+    for (;;) {
+      const st = await api(`/api/job?id=${job}`);
+      if (st.status === "error") throw new Error(st.error);
+      ui.progress(st.progress, st.live);
+      if (st.status === "done") return st.result;
+      await new Promise(r => setTimeout(r, 450));
+    }
+  } finally { ui.show(false); activeJob = null; }
+}
+const cancelJob = () => { if (activeJob) api("/api/cancel", { job: activeJob }).catch(() => {}); };
+$("btn-stop").onclick = cancelJob;
+$("btn-wf-stop").onclick = cancelJob;
+$("btn-rot-stop").onclick = cancelJob;
+
+function progressUI(prefix, sparkId) {
+  return {
+    show(v) { $(prefix).style.display = v ? "block" : "none"; },
+    progress(p, live) {
+      if (!p || !p.total) return;
+      $(prefix + "-fill").style.width = (100 * p.done / p.total).toFixed(1) + "%";
+      $(prefix + "-text").textContent = `${p.done} / ${p.total} 步`;
+      const bestEl = $(prefix + "-best");
+      if (bestEl && p.best != null) bestEl.textContent = p.best;
+      if (sparkId && live && live.length > 1) {
+        const svg = $(sparkId), W = svg.clientWidth || 800, H = 56;
+        svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+        const ys = live.map(d => d[1]);
+        let lo = Math.min(...ys), hi = Math.max(...ys);
+        if (hi - lo < 1e-9) hi = lo + 1;
+        const pts = live.map((d, i) =>
+          `${(8 + (W-16) * i/(live.length-1)).toFixed(1)},${(H-6-(H-12)*(d[1]-lo)/(hi-lo)).toFixed(1)}`).join(" ");
+        svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="${css("--s1")}" stroke-width="2"/>`;
+      }
+    },
+  };
+}
+const mainProg = progressUI("prog", "prog-spark");
+const wfProg = progressUI("wf-prog", null);
+const rotProg = progressUI("rot-prog", null);
+
 /* ---------- 資料區 ---------- */
 async function refreshTickers() {
   TICKERS = await api("/api/tickers");
   $("ticker-list").innerHTML = TICKERS.map(t =>
-    `<span>${t.ticker} · ${t.bars} 天（${t.start} ~ ${t.end}）</span>`).join("");
-  renderRows();
+    `<span>${t.ticker} · ${t.bars} 天（${t.start} ~ ${t.end}）</span>`).join("")
+    || '<span>還沒有資料——先按「產生示範資料」或抓真實報價。</span>';
+  renderRows(); renderRotTickers();
 }
 $("btn-sample").onclick = async () => {
   setStatus("data-status", "產生中…");
@@ -228,29 +477,25 @@ $("btn-sample").onclick = async () => {
 $("btn-fetch").onclick = async () => {
   const ts = $("fetch-tickers").value.trim().split(/[\s,]+/).filter(Boolean);
   if (!ts.length) return setStatus("data-status", "請先輸入股票代號", true);
-  setStatus("data-status", "抓取中…（第一次可能要幾秒）");
+  setStatus("data-status", "抓取中…");
   try {
     const r = await api("/api/fetch", { tickers: ts, period: $("fetch-period").value });
     setStatus("data-status", "完成：" + r.fetched.map(f => `${f.ticker} ${f.bars} 天`).join("、"));
     await refreshTickers();
-  } catch (e) { setStatus("data-status", "抓取失敗（此環境可能無法連外網）：" + e.message, true); }
+  } catch (e) { setStatus("data-status", "抓取失敗（需要能連外網的環境）：" + e.message, true); }
 };
-function setStatus(id, msg, err) { const el = $(id); el.textContent = msg; el.classList.toggle("err", !!err); }
 
 /* ---------- 組合編輯器 ---------- */
-function defaultRow() {
-  const t = TICKERS.length ? TICKERS[0].ticker : "";
-  const s = "macd";
+const defaults = s => Object.fromEntries(Object.entries(STRATS[s].params).map(([k, p]) => [k, p.default]));
+function defaultRow(ticker, strat) {
+  const t = ticker || (TICKERS.length ? TICKERS[0].ticker : "");
+  const s = strat || "macd";
   return { ticker: t, strategy: s, params: { ...defaults(s) }, weight: 1, opt_params: true };
 }
-const defaults = s => Object.fromEntries(Object.entries(STRATS[s].params).map(([k, p]) => [k, p.default]));
-
 function renderRows() {
-  const tb = $("rows-body");
-  tb.innerHTML = "";
+  const tb = $("rows-body"); tb.innerHTML = "";
   rows.forEach((row, i) => {
     const tr = document.createElement("tr");
-
     const tdT = document.createElement("td");
     const selT = document.createElement("select");
     TICKERS.forEach(t => selT.add(new Option(t.ticker, t.ticker)));
@@ -298,229 +543,373 @@ function renderRows() {
     const tdA = document.createElement("td");
     const bD = document.createElement("button"); bD.className = "ghost"; bD.textContent = "複製";
     bD.onclick = () => { rows.splice(i + 1, 0, JSON.parse(JSON.stringify(row))); renderRows(); };
-    const bX = document.createElement("button"); bX.className = "ghost"; bX.textContent = "✕";
-    bX.title = "刪除";
+    const bX = document.createElement("button"); bX.className = "ghost"; bX.textContent = "✕"; bX.title = "刪除";
     bX.onclick = () => { rows.splice(i, 1); renderRows(); };
     tdA.append(bD, bX);
-
     tr.append(tdT, tdS, tdP, tdW, tdO, tdA);
     tb.append(tr);
   });
+  renderScanSelectors();
 }
 $("btn-addrow").onclick = () => { rows.push(defaultRow()); renderRows(); };
 
-/* ---------- 執行 ---------- */
-function config() {
+/* ---------- 設定收集 ---------- */
+function commonCfg() {
   return {
-    rows: rows.map(r => ({ ticker: r.ticker, strategy: r.strategy,
-                           params: r.params, weight: r.weight, opt_params: r.opt_params })),
     fee_bps: parseFloat($("fee").value) || 0,
+    slippage_bps: parseFloat($("slippage").value) || 0,
+    vol_target: parseFloat($("vol-target").value) || 0,
+    train_frac: parseFloat($("train-frac").value) || 1,
     objective: $("objective").value,
-    steps: parseInt($("steps").value) || 500,
-    seed: parseInt($("seed").value) || 42,
-    opt_weights: $("opt-weights").checked,
-    opt_params: $("opt-params").checked,
   };
 }
-async function run(kind) {
-  if (!rows.length) return setStatus("run-status", "請先在「自由組合」新增至少一列", true);
-  const btns = [$("btn-backtest"), $("btn-anneal")];
-  btns.forEach(b => b.disabled = true);
-  setStatus("run-status", kind === "anneal"
-    ? "退火中…（步數越多越久，請稍候）" : "回測中…");
-  try {
-    const cfg = config();
-    const payload = await api(kind === "anneal" ? "/api/anneal" : "/api/backtest", cfg);
-    if (kind === "anneal" && payload.best_rows) {
-      rows = payload.best_rows.map(r => ({ ...r, params: { ...r.params } }));
-      renderRows();
-    }
-    renderResult(payload, kind);
-    addLog(kind, cfg, payload);
-    setStatus("run-status", kind === "anneal"
-      ? "退火完成，最佳參數與權重已套回上方表格。" : "回測完成。");
-  } catch (e) { setStatus("run-status", e.message, true); }
-  btns.forEach(b => b.disabled = false);
+function rowsCfg() {
+  return rows.map(r => ({ ticker: r.ticker, strategy: r.strategy,
+                          params: r.params, weight: r.weight, opt_params: r.opt_params }));
 }
-$("btn-backtest").onclick = () => run("backtest");
-$("btn-anneal").onclick = () => run("anneal");
+function annealCfg() {
+  return { ...commonCfg(), rows: rowsCfg(),
+           steps: parseInt($("steps").value) || 500,
+           restarts: parseInt($("restarts").value) || 1,
+           seed: parseInt($("seed").value) || 42,
+           opt_weights: $("opt-weights").checked,
+           opt_params: $("opt-params").checked };
+}
+
+/* ---------- 回測 / 退火 ---------- */
+const busy = v => [$("btn-backtest"), $("btn-anneal"), $("btn-wf"), $("btn-rot"), $("btn-rot-anneal"), $("btn-scan")]
+  .forEach(b => b.disabled = v);
+
+$("btn-backtest").onclick = async () => {
+  if (!rows.length) return setStatus("run-status", "請先新增至少一列組合", true);
+  busy(true); setStatus("run-status", "回測中…");
+  try {
+    const cfg = annealCfg();
+    const p = await api("/api/backtest", cfg);
+    renderResult(p, "backtest");
+    addLog("回測", cfg, p);
+    setStatus("run-status", "回測完成。");
+  } catch (e) { setStatus("run-status", e.message, true); }
+  busy(false);
+};
+$("btn-anneal").onclick = async () => {
+  if (!rows.length) return setStatus("run-status", "請先新增至少一列組合", true);
+  busy(true); setStatus("run-status", "退火中…（可隨時按「停止」取目前最佳解）");
+  try {
+    const cfg = annealCfg();
+    const p = await runJob("/api/anneal", cfg, mainProg);
+    if (p.best_rows) { rows = p.best_rows.map(r => ({ ...r, params: { ...r.params } })); renderRows(); }
+    renderResult(p, "anneal");
+    addLog("退火", annealCfg(), p);
+    setStatus("run-status", (p.stopped ? "已中途停止，" : "") + "最佳參數與權重已套回上方表格。");
+  } catch (e) { setStatus("run-status", e.message, true); }
+  busy(false);
+};
 
 /* ---------- 結果呈現 ---------- */
-function tile(k, v, cls, sub) {
-  return `<div class="tile"><div class="k">${k}</div><div class="v ${cls||""}">${v}</div>${sub?`<div class="b">${sub}</div>`:""}</div>`;
-}
+const tile = (k, v, cls, sub, hl) =>
+  `<div class="tile${hl ? " hl" : ""}"><div class="k">${k}</div><div class="v ${cls||""}">${v}</div>${sub?`<div class="b">${sub}</div>`:""}</div>`;
+
 function renderResult(p, kind) {
-  lastPayload = p;
   $("result-card").style.display = "";
   const s = p.summary, b = p.benchmark_summary;
   $("tiles").innerHTML =
-    tile("總報酬", fmtPct(s.total_return), s.total_return >= 0 ? "pos" : "neg",
-         `基準 ${fmtPct(b.total_return)}`) +
+    tile("總報酬", fmtPct(s.total_return), s.total_return >= 0 ? "pos" : "neg", `基準 ${fmtPct(b.total_return)}`) +
     tile("CAGR", fmtPct(s.cagr), s.cagr >= 0 ? "pos" : "neg") +
     tile("Sharpe", fmtNum(s.sharpe), "", `基準 ${fmtNum(b.sharpe)}`) +
     tile("最大回撤", fmtPct(s.max_drawdown), "neg", `基準 ${fmtPct(b.max_drawdown)}`) +
     tile("交易次數", s.trades, "");
+  if (p.split) {
+    const tr = p.split.train, va = p.split.valid;
+    const overfit = tr.sharpe > 0.5 && va.sharpe < tr.sharpe * 0.3;
+    $("split-tiles").innerHTML =
+      tile("訓練期 Sharpe", fmtNum(tr.sharpe), "", `報酬 ${fmtPct(tr.total_return)}`) +
+      tile("驗證期 Sharpe", fmtNum(va.sharpe), va.sharpe >= 0 ? "pos" : "neg",
+           `報酬 ${fmtPct(va.total_return)}`, true) +
+      tile("驗證期回撤", fmtPct(va.max_drawdown), "neg", `切分日 ${p.split.date}`) +
+      (overfit ? tile("⚠ 過擬合警訊", "訓練≫驗證", "neg", "驗證期大幅走樣") : "");
+  } else $("split-tiles").innerHTML = "";
 
   const series = [
-    { label: "組合", color: css("--s1"), values: p.portfolio, width: 2.5, on: true },
-    { label: "基準（等權買進持有）", color: css("--muted"), values: p.benchmark, dash: "5 4", on: true },
-    ...p.rows.map((r, i) => ({
-      label: r.label, color: i < SLOTS.length ? css(SLOTS[i]) : css("--baseline"),
-      values: r.equity, on: false,
-    })),
+    { label: "組合", color: slot(0), values: p.portfolio, width: 2.5 },
+    { label: "基準（等權買進持有）", color: css("--muted"), values: p.benchmark, dash: "5 4" },
+    ...p.rows.map((r, i) => ({ label: r.label, color: slot(i + 1), values: r.equity, on: false })),
   ];
-  drawChart(series, p.dates);
+  const opts = { shadeFrom: p.split ? p.split.index : null, baseline: 1 };
+  const redraw = () => eqChart.draw(series, p.dates, opts);
+  redraw(); renderLegend("legend", series, redraw);
+  ddChart.draw([{ label: "回撤", color: slot(0), values: p.drawdown, area: true, width: 1.5 }],
+               p.dates, { pct: true, baseline: 0, noXLabels: false, shadeFrom: p.split ? p.split.index : null });
 
   $("rows-detail").innerHTML = p.rows.map(r => {
     const rs = r.summary;
-    return `<tr><td>${r.label}</td><td class="num">${(r.weight*100).toFixed(1)}%</td>
-      <td class="num ${rs.total_return>=0?"pos":"neg"}">${fmtPct(rs.total_return)}</td>
-      <td class="num">${fmtNum(rs.sharpe)}</td>
-      <td class="num">${fmtPct(rs.max_drawdown)}</td><td class="num">${rs.trades}</td></tr>`;
+    const trades = (r.trades || []).map(t =>
+      `<tr><td>${t.entry}</td><td>${t.exit}${t.open ? "（持有中）" : ""}</td><td>${t.side}</td>
+       <td class="num">${t.days}</td><td class="num ${t.ret>=0?"pos":"neg"}">${fmtPct(t.ret)}</td></tr>`).join("");
+    return `<h3>${r.label}（權重 ${(r.weight*100).toFixed(1)}%）
+      — 報酬 ${fmtPct(rs.total_return)}、Sharpe ${fmtNum(rs.sharpe)}、回撤 ${fmtPct(rs.max_drawdown)}</h3>
+      ${trades ? `<table><thead><tr><th>進場</th><th>出場</th><th>方向</th><th class="num">天數</th><th class="num">報酬</th></tr></thead><tbody>${trades}</tbody></table>` : '<div class="hint">（沒有交易）</div>'}`;
   }).join("");
 
   const box = $("annealbox");
   if (kind === "anneal" && p.history) {
     box.style.display = "block";
-    $("anneal-note").textContent =
-      `退火收斂：最佳${$("objective").selectedOptions[0].text} = ${p.best_score}（由左到右為退火步數）`;
-    drawHistory(p.history);
+    $("anneal-note").textContent = `退火收斂：最佳${$("objective").selectedOptions[0].text} = ${p.best_score}`;
+    const svg = $("history"), W = svg.clientWidth || 1000, H = 80;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const ys = p.history.map(h => h[1]);
+    let lo = Math.min(...ys), hi = Math.max(...ys);
+    if (hi - lo < 1e-9) hi = lo + 1;
+    const pts = p.history.map((h, i) =>
+      `${(52 + (W-66) * i/(p.history.length-1)).toFixed(1)},${(6+(H-14)*(1-(h[1]-lo)/(hi-lo))).toFixed(1)}`).join(" ");
+    svg.innerHTML =
+      `<text x="44" y="12" text-anchor="end" font-size="11" fill="${css("--muted")}">${hi.toFixed(2)}</text>` +
+      `<text x="44" y="${H-4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${lo.toFixed(2)}</text>` +
+      `<polyline points="${pts}" fill="none" stroke="${css("--s1")}" stroke-width="2"/>`;
   } else box.style.display = "none";
 }
 
-/* ---------- SVG 折線圖 ---------- */
-let chartState = null;
-function drawChart(series, dates) {
-  const svg = $("chart");
-  const W = svg.clientWidth || 1000, H = 320, L = 52, R = 14, T = 12, B = 28;
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const on = series.filter(sr => sr.on);
-  if (!on.length) { svg.innerHTML = ""; chartState = null; renderLegend(series, dates); return; }
-  const all = on.flatMap(sr => sr.values);
-  let lo = Math.min(...all), hi = Math.max(...all);
-  if (hi - lo < 1e-9) { hi = lo + 1; }
-  const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
-  const x = i => L + (W - L - R) * (dates.length < 2 ? 0 : i / (dates.length - 1));
-  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
-  let g = "";
-  const nTicks = 5;
-  for (let k = 0; k <= nTicks; k++) {
-    const v = lo + (hi - lo) * k / nTicks, yy = y(v);
-    g += `<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="${css("--grid")}" stroke-width="1"/>`;
-    g += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${v.toFixed(2)}</text>`;
-  }
-  const nx = Math.min(6, dates.length);
-  for (let k = 0; k < nx; k++) {
-    const i = Math.round(k * (dates.length - 1) / Math.max(1, nx - 1));
-    g += `<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="11" fill="${css("--muted")}">${dates[i]?.slice(5) ?? ""}</text>`;
-  }
-  g += `<line x1="${L}" y1="${y(1)}" x2="${W-R}" y2="${y(1)}" stroke="${css("--baseline")}" stroke-width="1"/>`;
-  on.forEach(sr => {
-    const pts = sr.values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-    g += `<polyline points="${pts}" fill="none" stroke="${sr.color}" stroke-width="${sr.width||2}"
-          ${sr.dash ? `stroke-dasharray="${sr.dash}"` : ""} stroke-linejoin="round" stroke-linecap="round"/>`;
-  });
-  if (on.length <= 4) {  // 少量序列時加上線尾直接標示
-    on.forEach(sr => {
-      const i = sr.values.length - 1, yy = y(sr.values[i]);
-      g += `<circle cx="${x(i)}" cy="${yy}" r="3.5" fill="${sr.color}"/>`;
-    });
-  }
-  g += `<line id="xh" x1="0" y1="${T}" x2="0" y2="${H-B}" stroke="${css("--baseline")}" stroke-width="1" visibility="hidden"/>`;
-  svg.innerHTML = g;
-  chartState = { series: on, dates, x, y, L, R, W, H, T, B };
-  renderLegend(series, dates);
-}
-function renderLegend(series, dates) {
-  const lg = $("legend");
-  lg.innerHTML = "";
-  series.forEach(sr => {
-    const chip = document.createElement("span");
-    chip.className = "chip" + (sr.on ? "" : " off");
-    chip.innerHTML = `<span class="sw" style="background:${sr.color}"></span>${sr.label}`;
-    chip.onclick = () => { sr.on = !sr.on; drawChart(series, dates); };
-    lg.append(chip);
-  });
-}
-$("chart").addEventListener("mousemove", ev => {
-  if (!chartState) return;
-  const st = chartState, rect = $("chart").getBoundingClientRect();
-  const px = (ev.clientX - rect.left) * (st.W / rect.width);
-  const n = st.dates.length;
-  const i = Math.max(0, Math.min(n - 1,
-    Math.round((px - st.L) / (st.W - st.L - st.R) * (n - 1))));
-  const xh = $("chart").querySelector("#xh");
-  if (xh) { xh.setAttribute("x1", st.x(i)); xh.setAttribute("x2", st.x(i)); xh.setAttribute("visibility", "visible"); }
-  const tt = $("tooltip");
-  tt.style.display = "block";
-  tt.innerHTML = `<div class="d">${st.dates[i]}</div>` + st.series.map(sr =>
-    `<div class="r"><span><span class="sw" style="display:inline-block;width:10px;height:3px;border-radius:2px;background:${sr.color};margin-right:5px"></span>${sr.label}</span><b>${sr.values[i].toFixed(3)}</b></div>`).join("");
-  const wrap = $("chart").parentElement.getBoundingClientRect();
-  let tx = ev.clientX - wrap.left + 14;
-  if (tx + 190 > wrap.width) tx = ev.clientX - wrap.left - 190;
-  tt.style.left = tx + "px";
-  tt.style.top = Math.max(0, ev.clientY - wrap.top - 20) + "px";
-});
-$("chart").addEventListener("mouseleave", () => {
-  $("tooltip").style.display = "none";
-  const xh = $("chart").querySelector("#xh");
-  if (xh) xh.setAttribute("visibility", "hidden");
-});
+/* ---------- Walk-forward ---------- */
+$("btn-wf").onclick = async () => {
+  if (!rows.length) return setStatus("wf-status", "請先在上方新增組合列", true);
+  busy(true); setStatus("wf-status", "逐段退火＋樣本外驗證中…");
+  try {
+    const cfg = { ...annealCfg(), train_days: parseInt($("wf-train").value) || 126,
+                  test_days: parseInt($("wf-test").value) || 21,
+                  steps: parseInt($("wf-steps").value) || 120 };
+    const p = await runJob("/api/walkforward", cfg, wfProg);
+    $("wf-result").style.display = "block";
+    const s = p.summary, b = p.benchmark_summary;
+    $("wf-tiles").innerHTML =
+      tile("樣本外報酬", fmtPct(s.total_return), s.total_return >= 0 ? "pos" : "neg", `基準 ${fmtPct(b.total_return)}`, true) +
+      tile("樣本外 Sharpe", fmtNum(s.sharpe), "", `基準 ${fmtNum(b.sharpe)}`) +
+      tile("最大回撤", fmtPct(s.max_drawdown), "neg");
+    const series = [
+      { label: "樣本外組合", color: slot(0), values: p.portfolio, width: 2.5 },
+      { label: "基準", color: css("--muted"), values: p.benchmark, dash: "5 4" },
+    ];
+    const redraw = () => wfChart.draw(series, p.dates, { baseline: 1 });
+    redraw(); renderLegend("wf-legend", series, redraw);
+    $("wf-segs").innerHTML = p.segments.map(g =>
+      `<tr><td>${g.test_start} ~ ${g.test_end}</td><td class="num">${g.train_score}</td>
+       <td class="num ${g.oos_return>=0?"pos":"neg"}">${fmtPct(g.oos_return)}</td>
+       <td>${g.specs.map(x => `${x.ticker}·${x.strategy} ${(x.weight*100).toFixed(0)}%`).join("、")}</td></tr>`).join("");
+    addLog("walk-forward", cfg, p);
+    setStatus("wf-status", "完成——這條曲線每一天都是模型沒看過的資料。");
+  } catch (e) { setStatus("wf-status", e.message, true); }
+  busy(false);
+};
 
-function drawHistory(hist) {
-  const svg = $("history");
-  const W = svg.clientWidth || 1000, H = 90, L = 52, R = 14, T = 8, B = 6;
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const xs = hist.map(h => h[0]), ys = hist.map(h => h[2]);
-  let lo = Math.min(...ys), hi = Math.max(...ys);
-  if (hi - lo < 1e-9) hi = lo + 1;
-  const x = v => L + (W - L - R) * (v - xs[0]) / Math.max(1, xs[xs.length-1] - xs[0]);
-  const y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
-  const pts = hist.map(h => `${x(h[0]).toFixed(1)},${y(h[2]).toFixed(1)}`).join(" ");
-  svg.innerHTML =
-    `<text x="${L-8}" y="${y(hi)+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${hi.toFixed(2)}</text>` +
-    `<text x="${L-8}" y="${y(lo)+4}" text-anchor="end" font-size="11" fill="${css("--muted")}">${lo.toFixed(2)}</text>` +
-    `<polyline points="${pts}" fill="none" stroke="${css("--s1")}" stroke-width="2" stroke-linejoin="round"/>`;
+/* ---------- 參數熱圖 ---------- */
+function renderScanSelectors() {
+  const selR = $("scan-row");
+  const prev = selR.value;
+  selR.innerHTML = "";
+  rows.forEach((r, i) => selR.add(new Option(`#${i+1} ${r.ticker}·${r.strategy}`, i)));
+  if (prev && prev < rows.length) selR.value = prev;
+  fillScanParams();
 }
+function fillScanParams() {
+  const i = parseInt($("scan-row").value);
+  const px = $("scan-px"), py = $("scan-py");
+  px.innerHTML = ""; py.innerHTML = "";
+  if (isNaN(i) || !rows[i]) return;
+  const keys = Object.keys(STRATS[rows[i].strategy].params);
+  keys.forEach(k => { px.add(new Option(k, k)); py.add(new Option(k, k)); });
+  if (keys.length > 1) py.selectedIndex = 1;
+}
+$("scan-row").onchange = fillScanParams;
+$("btn-scan").onclick = async () => {
+  const i = parseInt($("scan-row").value);
+  const px = $("scan-px").value, py = $("scan-py").value;
+  if (isNaN(i) || !px || !py) return setStatus("scan-status", "請先選列與兩個參數", true);
+  if (px === py) return setStatus("scan-status", "X 與 Y 要選不同參數", true);
+  busy(true); setStatus("scan-status", "掃描中…");
+  try {
+    const p = await api("/api/scan", { ...commonCfg(), rows: rowsCfg(), row_i: i, px, py, nx: 13, ny: 13 });
+    drawHeatmap(p, i);
+    $("scan-result").style.display = "block";
+    $("scan-note").textContent = `最佳 ${p.px}=${p.best.x}、${p.py}=${p.best.y}（${p.best.value}）。顏色越深＝目標值越高。`;
+    setStatus("scan-status", "");
+  } catch (e) { setStatus("scan-status", e.message, true); }
+  busy(false);
+};
+function drawHeatmap(p, rowIdx) {
+  const svg = $("scan-chart"), W = svg.clientWidth || 520, H = 300,
+        L = 56, R = 10, T = 8, B = 34;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const xs = p.x, ys = p.y;
+  const vals = p.z.flat().filter(v => v != null);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 1e-9) hi = lo + 1;
+  const ramp = isDark() ? [...RAMP].reverse() : RAMP;
+  const colorOf = v => ramp[Math.max(0, Math.min(ramp.length - 1, Math.floor((v - lo) / (hi - lo) * (ramp.length - 1))))];
+  const cw = (W - L - R) / xs.length, ch = (H - T - B) / ys.length;
+  let g = "";
+  ys.forEach((yv, yi) => xs.forEach((xv, xi) => {
+    const v = p.z[yi][xi];
+    const fill = v == null ? css("--grid") : colorOf(v);
+    const isBest = xv === p.best.x && yv === p.best.y;
+    g += `<rect data-x="${xv}" data-y="${yv}" x="${(L + xi*cw).toFixed(1)}" y="${(T + (ys.length-1-yi)*ch).toFixed(1)}"
+      width="${Math.max(1, cw-1).toFixed(1)}" height="${Math.max(1, ch-1).toFixed(1)}" rx="2" fill="${fill}"
+      ${isBest ? `stroke="${css("--ink")}" stroke-width="2"` : ""} style="cursor:pointer"><title>${p.px}=${xv}, ${p.py}=${yv} → ${v == null ? "無效" : v}</title></rect>`;
+  }));
+  const xtick = Math.max(1, Math.floor(xs.length / 6));
+  xs.forEach((xv, xi) => { if (xi % xtick === 0)
+    g += `<text x="${(L + xi*cw + cw/2).toFixed(1)}" y="${H-18}" text-anchor="middle" font-size="10.5" fill="${css("--muted")}">${xv}</text>`; });
+  const ytick = Math.max(1, Math.floor(ys.length / 6));
+  ys.forEach((yv, yi) => { if (yi % ytick === 0)
+    g += `<text x="${L-6}" y="${(T + (ys.length-1-yi)*ch + ch/2 + 4).toFixed(1)}" text-anchor="end" font-size="10.5" fill="${css("--muted")}">${yv}</text>`; });
+  g += `<text x="${(L + (W-L-R)/2).toFixed(1)}" y="${H-4}" text-anchor="middle" font-size="11" fill="${css("--ink-2")}">${p.px}</text>`;
+  svg.innerHTML = g;
+  svg.querySelectorAll("rect").forEach(r => r.addEventListener("click", () => {
+    const row = rows[rowIdx];
+    if (!row) return;
+    const spx = STRATS[row.strategy].params[p.px], spy = STRATS[row.strategy].params[p.py];
+    row.params[p.px] = spx.kind === "int" ? parseInt(r.dataset.x) : parseFloat(r.dataset.x);
+    row.params[p.py] = spy.kind === "int" ? parseInt(r.dataset.y) : parseFloat(r.dataset.y);
+    renderRows();
+    setStatus("scan-status", `已把 ${p.px}=${r.dataset.x}、${p.py}=${r.dataset.y} 套回第 ${rowIdx+1} 列。`);
+  }));
+}
+
+/* ---------- 動量輪動 ---------- */
+function renderRotTickers() {
+  $("rot-tickers").innerHTML = TICKERS.map(t =>
+    `<label><input type="checkbox" class="rot-t" value="${t.ticker}" checked> ${t.ticker}</label>`).join("");
+}
+const rotCfg = () => ({
+  tickers: [...document.querySelectorAll(".rot-t:checked")].map(c => c.value),
+  lookback: parseInt($("rot-lookback").value) || 126,
+  top_n: parseInt($("rot-topn").value) || 2,
+  reb_days: parseInt($("rot-reb").value) || 21,
+  ...commonCfg(),
+  steps: parseInt($("steps").value) || 300,
+  restarts: parseInt($("restarts").value) || 1,
+  seed: parseInt($("seed").value) || 42,
+});
+function renderRotation(p, extra) {
+  $("rot-result").style.display = "block";
+  const s = p.summary, b = p.benchmark_summary;
+  $("rot-tiles").innerHTML =
+    tile("總報酬", fmtPct(s.total_return), s.total_return >= 0 ? "pos" : "neg", `基準 ${fmtPct(b.total_return)}`) +
+    tile("Sharpe", fmtNum(s.sharpe), "", `基準 ${fmtNum(b.sharpe)}`) +
+    tile("最大回撤", fmtPct(s.max_drawdown), "neg") +
+    tile("再平衡次數", s.trades, "");
+  const series = [
+    { label: "輪動組合", color: slot(0), values: p.portfolio, width: 2.5 },
+    { label: "基準（等權買進持有）", color: css("--muted"), values: p.benchmark, dash: "5 4" },
+  ];
+  const redraw = () => rotChart.draw(series, p.dates, { baseline: 1 });
+  redraw(); renderLegend("rot-legend", series, redraw);
+  $("rot-holdings").textContent = "近期持股：" +
+    p.holdings.map(h => `${h.date}→[${h.hold.join(",")}]`).join("　") + (extra || "");
+}
+$("btn-rot").onclick = async () => {
+  busy(true); setStatus("rot-status", "回測中…");
+  try {
+    const cfg = rotCfg();
+    const p = await api("/api/rotation", cfg);
+    renderRotation(p);
+    addLog("輪動", cfg, p);
+    setStatus("rot-status", "完成。");
+  } catch (e) { setStatus("rot-status", e.message, true); }
+  busy(false);
+};
+$("btn-rot-anneal").onclick = async () => {
+  busy(true); setStatus("rot-status", "退火中…");
+  try {
+    const cfg = rotCfg();
+    const p = await runJob("/api/rotation_anneal", cfg, rotProg);
+    if (p.best_params) {
+      $("rot-lookback").value = p.best_params.lookback;
+      $("rot-topn").value = p.best_params.top_n;
+      $("rot-reb").value = p.best_params.reb_days;
+    }
+    renderRotation(p, `　最佳參數：回看 ${p.best_params.lookback}、持有 ${p.best_params.top_n} 檔、每 ${p.best_params.reb_days} 天`);
+    addLog("輪動退火", rotCfg(), p);
+    setStatus("rot-status", (p.stopped ? "已中途停止，" : "") + "最佳參數已套回輸入框。");
+  } catch (e) { setStatus("rot-status", e.message, true); }
+  busy(false);
+};
 
 /* ---------- 實驗紀錄 ---------- */
-const LOG_KEY = "sim_experiments";
+const LOG_KEY = "sim_experiments_v2";
 const loadLog = () => { try { return JSON.parse(localStorage.getItem(LOG_KEY)) || []; } catch { return []; } };
-const saveLog = l => { try { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(-60))); } catch {} };
-function rowLabel(cfg) {
-  return cfg.rows.map(r => `${r.ticker}·${r.strategy}`).join(" + ");
+const saveLog = l => { try { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(-40))); } catch {} };
+function cfgLabel(kind, cfg) {
+  if (kind === "輪動" || kind === "輪動退火")
+    return `${cfg.tickers.length} 檔 · 回看${cfg.lookback} · 前${cfg.top_n}檔`;
+  return (cfg.rows || []).map(r => `${r.ticker}·${r.strategy}`).join(" + ");
 }
 function addLog(kind, cfg, payload) {
   const l = loadLog();
-  l.push({ time: new Date().toLocaleString("zh-TW", { hour12: false }),
-           kind, label: rowLabel(config()), summary: payload.summary, config: config() });
+  l.push({ time: new Date().toLocaleString("zh-TW", { hour12: false }), kind,
+           label: cfgLabel(kind, cfg), summary: payload.summary, config: cfg,
+           curve: { dates: payload.dates, values: payload.portfolio } });
   saveLog(l); renderLog();
 }
 function renderLog() {
   const l = loadLog().slice().reverse();
   $("log-body").innerHTML = l.map((e, ri) => {
     const s = e.summary;
-    return `<tr><td>${e.time}</td><td>${e.kind === "anneal" ? "退火" : "回測"}</td>
-      <td>${e.label}</td>
+    return `<tr><td><input type="checkbox" class="cmp" data-i="${ri}"></td>
+      <td>${e.time}</td><td>${e.kind}</td><td>${e.label}</td>
       <td class="num ${s.total_return>=0?"pos":"neg"}">${fmtPct(s.total_return)}</td>
       <td class="num">${fmtNum(s.sharpe)}</td>
       <td class="num">${fmtPct(s.max_drawdown)}</td>
-      <td><button class="ghost" data-i="${ri}">載入</button></td></tr>`;
+      <td><button class="ghost" data-load="${ri}">載入</button></td></tr>`;
   }).join("");
-  $("log-body").querySelectorAll("button").forEach(b => b.onclick = () => {
-    const e = loadLog().slice().reverse()[parseInt(b.dataset.i)];
+  $("log-body").querySelectorAll("button[data-load]").forEach(b => b.onclick = () => {
+    const e = loadLog().slice().reverse()[parseInt(b.dataset.load)];
     if (!e) return;
     const c = e.config;
-    rows = c.rows.map(r => ({ ...r, params: { ...r.params } }));
-    $("fee").value = c.fee_bps; $("objective").value = c.objective;
-    $("steps").value = c.steps; $("seed").value = c.seed;
-    $("opt-weights").checked = c.opt_weights; $("opt-params").checked = c.opt_params;
-    renderRows();
-    setStatus("run-status", `已載入 ${e.time} 的組合設定。`);
+    if (c.rows) { rows = c.rows.map(r => ({ ...r, params: { ...r.params } })); renderRows(); }
+    if (c.fee_bps != null) $("fee").value = c.fee_bps;
+    if (c.slippage_bps != null) $("slippage").value = c.slippage_bps;
+    if (c.vol_target != null) $("vol-target").value = c.vol_target;
+    if (c.train_frac != null) $("train-frac").value = String(c.train_frac);
+    if (c.objective) $("objective").value = c.objective;
+    if (c.steps) $("steps").value = c.steps;
+    if (c.restarts) $("restarts").value = c.restarts;
+    if (c.lookback) { $("rot-lookback").value = c.lookback; $("rot-topn").value = c.top_n; $("rot-reb").value = c.reb_days; }
+    setStatus("run-status", `已載入 ${e.time}（${e.kind}）的設定。`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
-$("btn-clearlog").onclick = () => { saveLog([]); renderLog(); };
+$("btn-compare").onclick = () => {
+  const l = loadLog().slice().reverse();
+  const picked = [...document.querySelectorAll(".cmp:checked")].map(c => l[parseInt(c.dataset.i)]).filter(e => e && e.curve);
+  if (picked.length < 1) return;
+  // 以各實驗自己的交易日序對齊到最長者（依序疊放，從 1 開始）
+  const longest = picked.reduce((a, b) => a.curve.dates.length >= b.curve.dates.length ? a : b);
+  const series = picked.map((e, i) => {
+    const pad = longest.curve.dates.length - e.curve.values.length;
+    return { label: `${e.kind} ${e.time.slice(5)}`, color: slot(i),
+             values: [...Array(Math.max(0, pad)).fill(null), ...e.curve.values].map(v => v == null ? 1 : v) };
+  });
+  $("cmp-wrap").style.display = "block";
+  const redraw = () => cmpChart.draw(series, longest.curve.dates, { baseline: 1 });
+  redraw(); renderLegend("cmp-legend", series, redraw);
+};
+$("btn-export").onclick = () => {
+  const blob = new Blob([JSON.stringify(loadLog(), null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "experiments.json";
+  a.click();
+};
+$("btn-import").onclick = () => $("import-file").click();
+$("import-file").onchange = async ev => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  try {
+    const arr = JSON.parse(await f.text());
+    if (Array.isArray(arr)) { saveLog([...loadLog(), ...arr]); renderLog(); }
+  } catch { alert("JSON 格式錯誤"); }
+  ev.target.value = "";
+};
+$("btn-clearlog").onclick = () => { saveLog([]); renderLog(); $("cmp-wrap").style.display = "none"; $("cmp-legend").innerHTML = ""; };
 
 /* ---------- 啟動 ---------- */
 (async function init() {
@@ -528,19 +917,11 @@ $("btn-clearlog").onclick = () => { saveLog([]); renderLog(); };
   await refreshTickers();
   if (TICKERS.length) {
     rows = [defaultRow()];
-    if (TICKERS.length > 1) rows.push({ ...defaultRow(), ticker: TICKERS[1].ticker,
-      strategy: "boll_mr", params: { ...defaults("boll_mr") } });
+    if (TICKERS.length > 1) rows.push(defaultRow(TICKERS[1].ticker, "boll_mr"));
     renderRows();
   }
   renderLog();
 })();
-window.addEventListener("resize", () => {
-  if (lastPayload && $("result-card").style.display !== "none" && chartState) {
-    // 重新繪製以符合新寬度
-    const p = lastPayload;
-    renderResult(p, $("annealbox").style.display === "block" ? "anneal" : "backtest");
-  }
-});
 </script>
 </body>
 </html>

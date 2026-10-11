@@ -69,8 +69,30 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--objective", default="sharpe",
                    choices=["sharpe", "total_return", "calmar_mix"])
     p.add_argument("--steps", type=int, default=400)
+    p.add_argument("--restarts", type=int, default=1, help="多重啟次數（不同種子取最佳）")
+    p.add_argument("--train-frac", type=float, default=1.0,
+                   help="<1 時只在前段（訓練期）評分，其餘留作驗證")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--fee-bps", type=float, default=10.0)
+    p.add_argument("--slippage-bps", type=float, default=0.0)
+
+    p = sub.add_parser("walkforward", help="滾動視窗：逐段退火 → 下一段樣本外驗證")
+    p.add_argument("-s", "--strategy", choices=STRATEGIES.keys(), required=True)
+    p.add_argument("-t", "--tickers", nargs="+", required=True)
+    p.add_argument("--train-days", type=int, default=126)
+    p.add_argument("--test-days", type=int, default=21)
+    p.add_argument("--steps", type=int, default=120)
+    p.add_argument("--objective", default="sharpe",
+                   choices=["sharpe", "total_return", "calmar_mix"])
+    p.add_argument("--fee-bps", type=float, default=10.0)
+
+    p = sub.add_parser("rotation", help="動量輪動：每期買過去表現最強的 N 檔")
+    p.add_argument("-t", "--tickers", nargs="*", default=None, help="預設用 data 目錄全部")
+    p.add_argument("--lookback", type=int, default=126)
+    p.add_argument("--top-n", type=int, default=2)
+    p.add_argument("--reb-days", type=int, default=21)
+    p.add_argument("--fee-bps", type=float, default=10.0)
+    p.add_argument("--anneal", action="store_true", help="先退火找最佳輪動參數")
 
     p = sub.add_parser("optimize-portfolio", help="模擬退火：組合權重 + 各標的參數")
     p.add_argument("-s", "--strategy", choices=STRATEGIES.keys(), required=True)
@@ -104,7 +126,7 @@ def main(argv: list[str] | None = None) -> None:
             df = data.load_csv(f"{args.data_dir}/{t}.csv")
             res = run_signals(df, strat, fee_bps=args.fee_bps)
             print(f"\n=== {t} / {strat!r} ===")
-            _print(res.summary())
+            _print({k: v for k, v in res.summary().items() if k != "trades_log"})
 
     elif args.cmd == "compare":
         for t in args.tickers:
@@ -120,13 +142,53 @@ def main(argv: list[str] | None = None) -> None:
                 print(f"{name:<12}{tr:>10.2%}{sh:>10.2f}{dd:>10.2%}{n:>8}")
 
     elif args.cmd == "optimize":
+        from .backtest import subresult
         df = data.load_csv(f"{args.data_dir}/{args.ticker}.csv")
-        print(f"對 {args.ticker} 的 {args.strategy} 做模擬退火（{args.steps} 步，目標 {args.objective}）...")
+        print(f"對 {args.ticker} 的 {args.strategy} 做模擬退火"
+              f"（{args.steps} 步 × {args.restarts} 重啟，目標 {args.objective}）...")
         best, res, log = annealing.optimize_params(
             df, args.strategy, objective=args.objective, fee_bps=args.fee_bps,
-            steps=args.steps, seed=args.seed, verbose=True)
+            slippage_bps=args.slippage_bps, train_frac=args.train_frac,
+            steps=args.steps, restarts=args.restarts, seed=args.seed, verbose=True)
         print(f"\n最佳參數: {best.params}")
-        _print(res.summary())
+        summary = {k: v for k, v in res.summary().items() if k != "trades_log"}
+        _print(summary)
+        if args.train_frac < 1.0:
+            nt = int(len(res.returns) * args.train_frac)
+            tr, va = subresult(res, 0, nt), subresult(res, nt, None)
+            print(f"訓練期 Sharpe {tr.sharpe:.2f} / 報酬 {tr.total_return:.2%}  |  "
+                  f"驗證期 Sharpe {va.sharpe:.2f} / 報酬 {va.total_return:.2%}")
+
+    elif args.cmd == "walkforward":
+        uni = data.load_universe(args.data_dir, tickers=args.tickers)
+        specs = [{"ticker": t, "strategy": args.strategy, "params": {},
+                  "weight": 1.0 / len(uni)} for t in uni]
+        print(f"Walk-forward：訓練 {args.train_days} 天 / 驗證 {args.test_days} 天 ...")
+        wf = annealing.walk_forward(uni, specs, train_days=args.train_days,
+                                    test_days=args.test_days, steps=args.steps,
+                                    objective=args.objective, fee_bps=args.fee_bps)
+        res = wf["result"]
+        print(f"\n樣本外：報酬 {res.total_return:.2%}  Sharpe {res.sharpe:.2f}  "
+              f"最大回撤 {res.max_drawdown:.2%}")
+        for g in wf["segments"]:
+            print(f"  {g['test_start']} ~ {g['test_end']}  訓練分數 {g['train_score']:+.2f}  "
+                  f"樣本外 {g['oos_return']:+.2%}")
+
+    elif args.cmd == "rotation":
+        from .backtest import run_rotation
+        uni = data.align_universe(data.load_universe(args.data_dir, tickers=args.tickers))
+        if args.anneal:
+            best, res, log = annealing.optimize_rotation(
+                uni, params={"lookback": args.lookback, "top_n": args.top_n,
+                             "reb_days": args.reb_days}, fee_bps=args.fee_bps)
+            print(f"最佳輪動參數: {best}")
+        else:
+            res = run_rotation(uni, lookback=args.lookback, top_n=args.top_n,
+                               reb_days=args.reb_days, fee_bps=args.fee_bps)
+        print(f"報酬 {res.total_return:.2%}  Sharpe {res.sharpe:.2f}  "
+              f"最大回撤 {res.max_drawdown:.2%}")
+        for h in res.meta.get("holdings", []):
+            print(f"  {h['date']} 持有 {h['hold']}")
 
     elif args.cmd == "optimize-portfolio":
         uni = data.load_universe(args.data_dir, tickers=args.tickers)
