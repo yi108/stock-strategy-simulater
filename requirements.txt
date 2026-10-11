@@ -1,0 +1,5 @@
+pandas>=2.0
+numpy>=1.24
+# 選用：在你自己的電腦上抓真實報價時才需要
+yfinance>=0.2.40
+matplotlib>=3.7
