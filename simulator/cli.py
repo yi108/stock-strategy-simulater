@@ -153,6 +153,14 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results", help="每段明細 CSV 的輸出目錄")
 
+    p = sub.add_parser("synth", help="用標的每日報酬合成槓桿 ETF，補足上市前的歷史")
+    p.add_argument("-t", "--base", default="QQQ", help="標的（預設 QQQ）")
+    p.add_argument("--leverage", type=float, default=2.0)
+    p.add_argument("--fee", type=float, default=0.0095, help="年管理費（預設 0.95%%，QLD 的費用率）")
+    p.add_argument("--name", default="QLD2X", help="輸出代號，存成 data/<name>.csv")
+    p.add_argument("--years", type=int, default=26)
+    p.add_argument("--check", default="QLD", help="與真實 ETF 比對準確度（空字串可略過）")
+
     p = sub.add_parser("best", help="策略實驗室：多種策略同場比較，依可承受回撤挑出最佳")
     p.add_argument("-t", "--tickers", nargs="+", default=["QQQ", "QLD"],
                    help="第一檔為主要標的（預設 QQQ QLD）；多檔時只用共同日期")
@@ -300,6 +308,27 @@ def _main(argv: list[str] | None = None) -> None:
                     "固定配置報酬", "差距(百分點)"], rows)
         print("\n固定配置 = 每天維持與該設定「平均持股」相同的比例在標的、其餘放現金，"
               "不挑時機；差距為正代表逢跌買進的時機有加分。")
+
+    elif args.cmd == "synth":
+        from .research import compare_series, synth_leveraged
+        base = data.load_history(args.base, args.data_dir, years=args.years)
+        cash = data.load_cash_rates(base["date"], args.data_dir, years=args.years)
+        syn = synth_leveraged(base, cash, leverage=args.leverage, fee=args.fee)
+        path = os.path.join(args.data_dir, f"{args.name}.csv")
+        data.save_csv(syn, path)
+        print(f"已合成 {args.name} = {args.leverage:g} 倍 {args.base}（管理費 {args.fee:.2%}、"
+              f"融資成本 = {args.leverage - 1:g} × 國庫券利率），"
+              f"{syn['date'].iloc[0]} ~ {syn['date'].iloc[-1]}，存到 {path}")
+        if args.check:
+            real = data.load_or_fetch(args.check, args.data_dir, period="max")
+            c = compare_series(syn, real)
+            print(f"\n與真實 {args.check} 比對（重疊期間 {c['start']} ~ {c['end']}，{c['days']} 天）：")
+            _table(["", args.name, args.check],
+                   [["年化報酬", _pct(c["cagr_a"]), _pct(c["cagr_b"])],
+                    ["最大回撤", _pct(c["mdd_a"]), _pct(c["mdd_b"])]])
+            print(f"日報酬相關係數 {c['corr']:.4f}；各年度報酬差距的中位數 "
+                  f"{c['yearly_gap_median'] * 100:.2f} 個百分點")
+            print("年化報酬與回撤接近、相關係數接近 1，代表合成序列可以用來推估上市前的表現。")
 
     elif args.cmd == "best":
         from .research import pick_by_risk, strategy_lab

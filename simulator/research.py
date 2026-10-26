@@ -77,6 +77,40 @@ def summarize(win: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ---------------------------------------------------------------- 合成槓桿 ETF
+
+def synth_leveraged(base: pd.DataFrame, cash: np.ndarray, leverage: float = 2.0,
+                    fee: float = 0.0095, start_price: float = 100.0) -> pd.DataFrame:
+    """用標的每日報酬合成每日再平衡的槓桿 ETF。
+
+    每日報酬 = 槓桿 × 標的報酬 − (槓桿 − 1) × 短期利率 / 252 − 管理費 / 252
+    （槓桿 ETF 借錢放大部位，要付接近短期利率的融資成本）。
+    """
+    r = base["close"].pct_change().fillna(0.0).to_numpy()
+    daily = leverage * r - (leverage - 1.0) * cash / 252.0 - fee / 252.0
+    daily[0] = 0.0
+    close = start_price * np.cumprod(1.0 + np.maximum(daily, -0.999))
+    return pd.DataFrame({"date": base["date"].to_numpy(), "open": close, "high": close,
+                         "low": close, "close": close, "volume": 0})
+
+
+def compare_series(a: pd.DataFrame, b: pd.DataFrame) -> dict:
+    """比較兩條價格序列在重疊期間的年化報酬、最大回撤、日報酬相關性與年度差距。"""
+    m = a[["date", "close"]].merge(b[["date", "close"]], on="date", suffixes=("_a", "_b"))
+    out = {"start": m["date"].iloc[0], "end": m["date"].iloc[-1], "days": len(m)}
+    for k in ("a", "b"):
+        c = m[f"close_{k}"].to_numpy(dtype=float)
+        out[f"cagr_{k}"] = float((c[-1] / c[0]) ** (252 / (len(c) - 1)) - 1.0)
+        out[f"mdd_{k}"] = float((c / np.maximum.accumulate(c) - 1.0).min())
+    ra, rb = m["close_a"].pct_change(), m["close_b"].pct_change()
+    out["corr"] = float(ra.corr(rb))
+    yr = m.assign(year=m["date"].str[:4]).groupby("year")
+    yearly = yr.agg(a=("close_a", lambda s: s.iloc[-1] / s.iloc[0] - 1),
+                    b=("close_b", lambda s: s.iloc[-1] / s.iloc[0] - 1))
+    out["yearly_gap_median"] = float((yearly["a"] - yearly["b"]).abs().median())
+    return out
+
+
 # ---------------------------------------------------------------- 策略實驗室
 
 STATIC_LEVELS = {0: (0.3, 0.5, 0.7), 1: (0.5,)}   # 第一檔標的 / 其他標的的固定持股比例
