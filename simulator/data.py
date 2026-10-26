@@ -91,6 +91,8 @@ def fetch_yfinance(ticker: str, period: str = "1y") -> pd.DataFrame:
     import yfinance as yf
 
     raw = yf.Ticker(ticker).history(period=period, interval="1d", auto_adjust=True)
+    if raw.empty:
+        return pd.DataFrame(columns=COLUMNS)
     df = raw.reset_index()
     df = df.rename(columns={"Date": "date", "Open": "open", "High": "high",
                             "Low": "low", "Close": "close", "Volume": "volume"})
@@ -110,13 +112,43 @@ def fetch_stooq(ticker: str, years: int = 1) -> pd.DataFrame:
     return _normalize(df)
 
 
+class DataError(Exception):
+    """抓不到或讀不到報價資料。"""
+
+
 def fetch(ticker: str, period: str = "1y") -> pd.DataFrame:
-    """先試 yfinance，失敗再試 stooq。"""
+    """先試 yfinance，失敗再試 stooq；兩者都失敗時拋出 DataError 並說明原因。"""
+    errors = []
     try:
-        return fetch_yfinance(ticker, period=period)
-    except Exception:
+        df = fetch_yfinance(ticker, period=period)
+        if len(df):
+            return df
+        errors.append("yfinance: 沒有回傳任何資料（代號可能錯誤）")
+    except ImportError:
+        errors.append("yfinance: 尚未安裝（請執行 pip install yfinance）")
+    except Exception as e:
+        errors.append(f"yfinance: {type(e).__name__}: {e}")
+    try:
         years = max(1, int(period.rstrip("y") or 1)) if period.endswith("y") else 1
-        return fetch_stooq(ticker, years=years)
+        df = fetch_stooq(ticker, years=years)
+        if len(df):
+            return df
+        errors.append("stooq: 沒有回傳任何資料")
+    except Exception as e:
+        errors.append(f"stooq: {type(e).__name__}: {e}")
+    raise DataError(f"抓不到 {ticker} 的報價：\n  " + "\n  ".join(errors))
+
+
+def load_or_fetch(ticker: str, data_dir: str = "data", period: str = "1y",
+                  log=print) -> pd.DataFrame:
+    """讀取 data_dir/<ticker>.csv；檔案不存在時自動下載並存檔。"""
+    path = os.path.join(data_dir, f"{ticker}.csv")
+    if not os.path.exists(path):
+        log(f"找不到 {path}，自動下載 {ticker} 最近 {period} 的報價…")
+        df = fetch(ticker, period=period)
+        save_csv(df, path)
+        log(f"  已存檔 {path}（{len(df)} 根日K，{df['date'].iloc[0]} ~ {df['date'].iloc[-1]}）")
+    return load_csv(path)
 
 
 def record(ticker: str, data_dir: str = "data") -> pd.DataFrame:

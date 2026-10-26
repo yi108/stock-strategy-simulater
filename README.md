@@ -114,9 +114,12 @@ python -m simulator.cli backtest -s macd -t AAPL -p fast=8 slow=30 signal=7
 - `mode 2`：只要回撤 ≥ `dd_trigger`，每 `cooldown` 個交易日買一次
 
 ```bash
-python -m simulator.cli fetch -t QQQ QLD --period 1y
 python -m simulator.cli dip -t QQQ QLD --triggers 0.03 0.05 0.10 --buy-fracs 0.05 0.10 --cash-rate 0.04
 ```
+
+CLI 的分析指令遇到 `data/` 裡沒有的代號會自動下載（預設最近 1 年，
+可用 `python -m simulator.cli --fetch-period 2y dip ...` 改期間）；
+已存在的檔案不會重抓，要更新資料請執行 `fetch`。
 
 網頁上把兩列都設成 `dip`（一列 QQQ、一列 QLD），結果區的對照表會並列每列的
 報酬、回撤、平均/期末持股比例，以及同一檔買進持有的報酬與回撤。

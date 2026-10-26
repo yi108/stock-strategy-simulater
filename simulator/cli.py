@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import sys
 
 from . import annealing, data
 from .backtest import run_portfolio, run_signals
@@ -38,8 +40,18 @@ def _print(obj):
 
 
 def main(argv: list[str] | None = None) -> None:
+    try:
+        _main(argv)
+    except data.DataError as e:
+        print(f"錯誤：{e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(prog="simulator", description="股票策略模擬器")
     ap.add_argument("--data-dir", default="data", help="CSV 資料目錄（預設 data/）")
+    ap.add_argument("--fetch-period", default="1y",
+                    help="資料檔不存在時自動下載的期間（預設 1y）")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("sample", help="產生合成示範資料")
@@ -118,6 +130,17 @@ def main(argv: list[str] | None = None) -> None:
 
     args = ap.parse_args(argv)
 
+    def load(ticker: str):
+        return data.load_or_fetch(ticker, args.data_dir, period=args.fetch_period)
+
+    def load_uni(tickers):
+        if tickers:
+            return {t: load(t) for t in tickers}
+        uni = data.load_universe(args.data_dir) if os.path.isdir(args.data_dir) else {}
+        if not uni:
+            raise data.DataError(f"{args.data_dir}/ 裡沒有任何 CSV，請用 -t 指定代號或先執行 fetch")
+        return uni
+
     if args.cmd == "sample":
         uni = data.generate_sample_universe(args.data_dir, tickers=args.tickers, days=args.days)
         print(f"已產生 {len(uni)} 檔示範資料到 {args.data_dir}/: {', '.join(uni)}")
@@ -136,14 +159,14 @@ def main(argv: list[str] | None = None) -> None:
     elif args.cmd == "backtest":
         strat = make(args.strategy, **_parse_params(args.param))
         for t in args.tickers:
-            df = data.load_csv(f"{args.data_dir}/{t}.csv")
+            df = load(t)
             res = run_signals(df, strat, fee_bps=args.fee_bps)
             print(f"\n=== {t} / {strat!r} ===")
             _print({k: v for k, v in res.summary().items() if k != "trades_log"})
 
     elif args.cmd == "compare":
         for t in args.tickers:
-            df = data.load_csv(f"{args.data_dir}/{t}.csv")
+            df = load(t)
             print(f"\n=== {t} ===")
             rows = []
             for name in STRATEGIES:
@@ -156,7 +179,7 @@ def main(argv: list[str] | None = None) -> None:
 
     elif args.cmd == "optimize":
         from .backtest import subresult
-        df = data.load_csv(f"{args.data_dir}/{args.ticker}.csv")
+        df = load(args.ticker)
         print(f"對 {args.ticker} 的 {args.strategy} 做模擬退火"
               f"（{args.steps} 步 × {args.restarts} 重啟，目標 {args.objective}）...")
         best, res, log = annealing.optimize_params(
@@ -173,7 +196,7 @@ def main(argv: list[str] | None = None) -> None:
                   f"驗證期 Sharpe {va.sharpe:.2f} / 報酬 {va.total_return:.2%}")
 
     elif args.cmd == "walkforward":
-        uni = data.load_universe(args.data_dir, tickers=args.tickers)
+        uni = load_uni(args.tickers)
         specs = [{"ticker": t, "strategy": args.strategy, "params": {},
                   "weight": 1.0 / len(uni)} for t in uni]
         print(f"Walk-forward：訓練 {args.train_days} 天 / 驗證 {args.test_days} 天 ...")
@@ -189,7 +212,7 @@ def main(argv: list[str] | None = None) -> None:
 
     elif args.cmd == "dip":
         for t in args.tickers:
-            df = data.load_csv(f"{args.data_dir}/{t}.csv")
+            df = load(t)
             dd = (df["close"] / df["close"].cummax() - 1).min()
             bh = run_signals(df, make("buyhold"), fee_bps=args.fee_bps)
             print(f"\n=== {t}  {df['date'].iloc[0]} ~ {df['date'].iloc[-1]}  "
@@ -210,7 +233,7 @@ def main(argv: list[str] | None = None) -> None:
 
     elif args.cmd == "rotation":
         from .backtest import run_rotation
-        uni = data.align_universe(data.load_universe(args.data_dir, tickers=args.tickers))
+        uni = data.align_universe(load_uni(args.tickers))
         if args.anneal:
             best, res, log = annealing.optimize_rotation(
                 uni, params={"lookback": args.lookback, "top_n": args.top_n,
@@ -225,7 +248,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  {h['date']} 持有 {h['hold']}")
 
     elif args.cmd == "optimize-portfolio":
-        uni = data.load_universe(args.data_dir, tickers=args.tickers)
+        uni = load_uni(args.tickers)
         print(f"對 {len(uni)} 檔標的做組合退火（策略 {args.strategy}，{args.steps} 步，目標 {args.objective}）...")
         best, res, log = annealing.optimize_portfolio(
             uni, args.strategy, objective=args.objective, fee_bps=args.fee_bps,
