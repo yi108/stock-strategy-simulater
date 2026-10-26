@@ -129,7 +129,7 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--triggers", nargs="+", type=float, default=[0.02, 0.03, 0.05, 0.08, 0.10],
                    help="回撤觸發幅度，例如 0.03 = 3%%")
     p.add_argument("--buy-fracs", nargs="+", type=float, default=[0.05],
-                   help="每次投入初始資金的比例，例如 0.05 = 5%%")
+                   help="每次投入當下總資產的比例，例如 0.05 = 5%%")
     p.add_argument("--mode", type=int, default=0, choices=[0, 1, 2],
                    help="0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買")
     p.add_argument("--cooldown", type=int, default=5)
@@ -365,6 +365,24 @@ def _main(argv: list[str] | None = None) -> None:
                 for _, r in summ.sort_values("full_cagr", ascending=False).iterrows()]
         _table(["策略", "一年平均", "一年中位", "最差10%", "最差一年", "年內最差回撤",
                 f"勝{base}", "全期年化", "全期最大回撤"], rows)
+
+        print("\n風險溢價（扣除國庫券報酬後）——依 Sharpe 由高到低：")
+        ranked = summ.sort_values("sharpe", ascending=False)
+        _table(["策略", "超額年化", "年化波動", "Sharpe", "Sortino", "Calmar", "全期最大回撤"],
+               [[r["strategy"], _pct(r["premium"]), _pct(r["vol"]), f"{r['sharpe']:.2f}",
+                 f"{r['sortino']:.2f}", f"{r['calmar']:.2f}", _pct(r["full_mdd"])]
+                for _, r in ranked.iterrows()])
+        # 逢跌加碼的全期數字取決於「起點剛好空手」這條單一路徑，不納入推薦
+        top = ranked[~ranked["strategy"].str.contains("逢跌加碼")].iloc[0]
+        print(f"\n每單位風險換到最多溢價（不含逢跌加碼，其全期數字取決於起點是否剛好空手）："
+              f"{top['strategy']}（Sharpe {top['sharpe']:.2f}）。"
+              "\n若它的回撤超出你能承受的範圍，可以只放一部分資金、其餘放國庫券（以下為按比例縮放的估算）：")
+        mix_rows = []
+        for target in (0.20, 0.35, 0.50):
+            f = min(1.0, target / abs(top["full_mdd"]))
+            mix_rows.append([f"約 -{target:.0%}", f"{f:.0%}", _pct(f * top["premium"]),
+                             _pct(f * top["full_mdd"])])
+        _table(["目標回撤", f"{top['strategy']} 比例", "估計超額年化", "估計最大回撤"], mix_rows)
 
         print("\n依你能承受的最大回撤挑選（全期與任一年內的回撤都不得超過門檻；"
               "以全期年化報酬最高者為準）：")

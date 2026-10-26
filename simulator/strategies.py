@@ -317,12 +317,12 @@ class TSMomentum(Strategy):
 
 
 class DipBuy(Strategy):
-    """逢跌加碼：從高點回撤達 dd_trigger 就投入 buy_frac 的初始資金（mode 0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買一次）；exit_mode 0 只買不賣 / 1 回到前高全部賣出 / 2 部位獲利達 tp_pct 全部賣出。
+    """逢跌加碼：從高點回撤達 dd_trigger 就投入當下總資產的 buy_frac（mode 0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買一次）；exit_mode 0 只買不賣 / 1 回到前高全部賣出 / 2 部位獲利達 tp_pct 全部賣出。
 
     與訊號策略不同，這是以「現金 + 股數」逐筆累積的模擬：
     - 初始資金 1.0，init_frac 為第一天就先投入的比例，其餘為現金
     - 高點 = 回測期間至今的最高收盤價；創新高時重置加碼階梯
-    - 每次加碼金額 = buy_frac × 初始資金（現金不足時用剩下的全部）
+    - 每次加碼金額 = buy_frac × 當下總資產（現金 + 持股市值；現金不足時用剩下的全部）
     - 於觸發當日收盤成交（等同收盤前下單），買賣都收交易成本
     - mode 0：回撤每跨過一個 dd_trigger 的整數倍買一次（-3%、-6%、-9%…）
       mode 1：價格比「上次買價」（或高點）再跌 dd_trigger 才買
@@ -411,19 +411,20 @@ class DipBuy(Strategy):
             if c >= peak:
                 peak, rung, ref_price = c, 0, None
             dd = 1.0 - c / peak
+            size = lot * (cash + shares * c)
             if mode == 0:
                 k = int(dd / trig + 1e-9)
                 if k > rung:
-                    buy(i, lot * (k - rung), dd)
+                    buy(i, size * (k - rung), dd)
                     rung = k
             elif mode == 1:
                 ref = ref_price if ref_price is not None else peak
                 if c <= ref * (1.0 - trig):
-                    buy(i, lot, dd)
+                    buy(i, size, dd)
                     ref_price = c
             else:
                 if dd >= trig and i - last_buy_i >= cooldown:
-                    buy(i, lot, dd)
+                    buy(i, size, dd)
                     last_buy_i = i
             eq = cash + shares * c
             equity.append(eq)

@@ -148,6 +148,32 @@ def _window_stats(r: np.ndarray, s: int, window: int) -> tuple[float, float]:
     return float(eq[-1] - 1.0), float((eq / np.maximum.accumulate(eq) - 1.0).min())
 
 
+def full_metrics(r: np.ndarray, rf_annual: np.ndarray) -> dict:
+    """全期績效與風險溢價指標。r 為每日報酬，rf_annual 為同長度的每日國庫券年利率。
+
+    風險溢價（超額年化）= 策略年化 − 國庫券年化；
+    Sharpe = 每日超額報酬平均 / 每日報酬標準差 × √252；
+    Sortino 只用下跌（超額報酬 < 0）的波動當分母；
+    Calmar = 超額年化 / |最大回撤|。
+    """
+    r = np.asarray(r, dtype=float)
+    rf = np.asarray(rf_annual, dtype=float) / 252.0
+    years = len(r) / 252.0
+    eq = np.cumprod(1.0 + r)
+    cagr = float(eq[-1] ** (1.0 / years) - 1.0)
+    mdd = float((eq / np.maximum.accumulate(eq) - 1.0).min())
+    cash_cagr = float(np.prod(1.0 + rf) ** (1.0 / years) - 1.0)
+    ex = r - rf
+    sd = float(r.std(ddof=1))
+    down = float(np.sqrt(np.mean(np.minimum(ex, 0.0) ** 2)))
+    premium = cagr - cash_cagr
+    return {"full_cagr": cagr, "full_mdd": mdd, "premium": premium,
+            "vol": sd * np.sqrt(252.0),
+            "sharpe": float(ex.mean() / sd * np.sqrt(252.0)) if sd > 0 else np.nan,
+            "sortino": float(ex.mean() / down * np.sqrt(252.0)) if down > 0 else np.nan,
+            "calmar": premium / abs(mdd) if mdd < 0 else np.nan}
+
+
 def _dip_lab_configs() -> list[dict]:
     return (dip_configs([0.03], [0.05, 0.10])
             + dip_configs([0.03], [0.10], exit_mode=1)
@@ -189,37 +215,35 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
                              "ret": res.total_return, "mdd": res.max_drawdown})
     win = pd.DataFrame(recs)
 
-    full: dict[str, tuple[float, float]] = {}
+    rf_full = cash[first_start + 1:]
+    full: dict[str, dict] = {}
     for name, r in cont.items():
-        eq = np.cumprod(1.0 + r[first_start + 1:])
-        full[name] = (float(eq[-1] ** (252 / len(eq)) - 1.0),
-                      float((eq / np.maximum.accumulate(eq) - 1.0).min()))
+        full[name] = full_metrics(r[first_start + 1:], rf_full)
     for t in tickers:
         sub = prices[t].iloc[first_start:].reset_index(drop=True)
         for c in dip_cfgs:
             params = {k: v for k, v in c.items() if k != "label"}
             res = run_signals(sub, make("dip", **params), fee_bps=fee_bps,
                               cash_rate=cash[first_start:])
-            full[f"{t} 逢跌加碼 {c['label']}"] = (res.cagr, res.max_drawdown)
+            full[f"{t} 逢跌加碼 {c['label']}"] = full_metrics(res.returns.to_numpy()[1:],
+                                                             rf_full)
 
     base = win[win["strategy"] == f"{tickers[0]} 買進持有"].set_index("start")["ret"]
     rows = []
     for name, g in win.groupby("strategy", sort=False):
         g = g.set_index("start")
-        full_cagr, full_mdd = full.get(name, (np.nan, np.nan))
         rows.append({"strategy": name, "mean": g["ret"].mean(), "median": g["ret"].median(),
                      "p10": g["ret"].quantile(0.10), "worst": g["ret"].min(),
                      "worst_mdd": g["mdd"].min(),
                      "beat_base": (g["ret"] > base.reindex(g.index)).mean(),
-                     "full_cagr": full_cagr, "full_mdd": full_mdd})
+                     **full[name]})
     return win, pd.DataFrame(rows)
 
 
 def pick_by_risk(summary: pd.DataFrame, budgets=(0.20, 0.35, 0.50, None)) -> list[dict]:
     """在「全期與任一年內的最大回撤」都不超過上限的策略中，挑出全期年化報酬最高者。
 
-    同時看一年期回撤，是因為逢跌加碼的每筆金額以初始資金計：帳戶長大後部位相對變小，
-    全期回撤會被低估，但從現金開始的一年期區間仍會暴露真實風險。
+    同時看一年期回撤：全期只是一條路徑，從現金開始的一年期區間能補上不同進場時點的風險。
     """
     picks = []
     risk = summary[["full_mdd", "worst_mdd"]].min(axis=1)

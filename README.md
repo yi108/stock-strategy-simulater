@@ -107,7 +107,7 @@ python -m simulator.cli backtest -s macd -t AAPL -p fast=8 slow=30 signal=7
 ## 逢跌加碼研究（例：QQQ vs QLD）
 
 `dip` 策略從全現金出發（`init_frac` 可設定第一天先投入的比例），
-每當價格從期間高點回撤達 `dd_trigger` 就投入 `buy_frac` × 初始資金，只買不賣：
+每當價格從期間高點回撤達 `dd_trigger` 就投入 `buy_frac` × 當下總資產（現金 + 持股市值）：
 
 - `mode 0`：每多跌一階買一次（-3%、-6%、-9%…），創新高後重置
 - `mode 1`：比「上次買價」再跌 `dd_trigger` 才買
