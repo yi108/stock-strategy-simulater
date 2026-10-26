@@ -366,7 +366,8 @@ def _main(argv: list[str] | None = None) -> None:
         _table(["策略", "一年平均", "一年中位", "最差10%", "最差一年", "年內最差回撤",
                 f"勝{base}", "全期年化", "全期最大回撤"], rows)
 
-        print("\n依你能承受的「全期最大回撤」挑選（以全期年化報酬最高者為準）：")
+        print("\n依你能承受的最大回撤挑選（全期與任一年內的回撤都不得超過門檻；"
+              "以全期年化報酬最高者為準）：")
         picks = []
         for p in pick_by_risk(summ):
             label = "不限" if p["budget"] is None else f"不超過 -{p['budget']:.0%}"

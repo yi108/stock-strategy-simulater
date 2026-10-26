@@ -216,11 +216,16 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
 
 
 def pick_by_risk(summary: pd.DataFrame, budgets=(0.20, 0.35, 0.50, None)) -> list[dict]:
-    """依「全期最大回撤」上限，挑出全期年化報酬最高的策略。"""
+    """在「全期與任一年內的最大回撤」都不超過上限的策略中，挑出全期年化報酬最高者。
+
+    同時看一年期回撤，是因為逢跌加碼的每筆金額以初始資金計：帳戶長大後部位相對變小，
+    全期回撤會被低估，但從現金開始的一年期區間仍會暴露真實風險。
+    """
     picks = []
+    risk = summary[["full_mdd", "worst_mdd"]].min(axis=1)
     for b in budgets:
         # 以畫面顯示的精度（0.01%）比較，避免 -20.00% 因浮點誤差被判為超過 -20%
-        ok = summary if b is None else summary[summary["full_mdd"].round(4) >= -b]
+        ok = summary if b is None else summary[risk.round(4) >= -b]
         ok = ok.dropna(subset=["full_cagr"])
         if ok.empty:
             picks.append({"budget": b, "row": None})
