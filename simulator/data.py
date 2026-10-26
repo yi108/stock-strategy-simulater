@@ -22,7 +22,11 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip().lower() for c in df.columns]
     df = df[[c for c in COLUMNS if c in df.columns]]
     df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
-    df = df.dropna().sort_values("date").drop_duplicates("date", keep="last")
+    # 指數（如 ^IRX）的成交量常為空值，只要求日期與收盤價存在
+    df = df.dropna(subset=[c for c in ("date", "close") if c in df.columns])
+    if "volume" in df.columns:
+        df["volume"] = df["volume"].fillna(0)
+    df = df.sort_values("date").drop_duplicates("date", keep="last")
     return df.reset_index(drop=True)
 
 
@@ -149,6 +153,47 @@ def load_or_fetch(ticker: str, data_dir: str = "data", period: str = "1y",
         save_csv(df, path)
         log(f"  已存檔 {path}（{len(df)} 根日K，{df['date'].iloc[0]} ~ {df['date'].iloc[-1]}）")
     return load_csv(path)
+
+
+YF_PERIODS = {1, 2, 5, 10}
+
+
+def load_history(ticker: str, data_dir: str = "data", years: int = 10,
+                 name: str | None = None, log=print) -> pd.DataFrame:
+    """確保 data_dir/<name>.csv 至少涵蓋最近 years 年；不夠就重新下載並合併存檔。"""
+    path = os.path.join(data_dir, f"{name or ticker}.csv")
+    need_start = (pd.Timestamp.today().normalize() - pd.DateOffset(years=years)
+                  + pd.Timedelta(days=10))
+    old = None
+    if os.path.exists(path):
+        old = load_csv(path)
+        if len(old) and pd.Timestamp(old["date"].iloc[0]) <= need_start:
+            return old
+        log(f"{path} 只有 {old['date'].iloc[0]} 起的資料，下載 {ticker} 最近 {years} 年…")
+    else:
+        log(f"找不到 {path}，下載 {ticker} 最近 {years} 年…")
+    period = f"{years}y" if years in YF_PERIODS else "max"
+    new = fetch(ticker, period=period)
+    merged = _normalize(pd.concat([old, new], ignore_index=True)) if old is not None else new
+    save_csv(merged, path)
+    log(f"  已存檔 {path}（{len(merged)} 根日K，{merged['date'].iloc[0]} ~ {merged['date'].iloc[-1]}）")
+    if pd.Timestamp(merged["date"].iloc[0]) > need_start:
+        log(f"  注意：{ticker} 最早只有 {merged['date'].iloc[0]} 的資料，不足 {years} 年")
+    return merged
+
+
+CASH_TICKER = "^IRX"      # 13 週美國國庫券殖利率（單位：%）
+CASH_FILE = "CASH_IRX"
+
+
+def load_cash_rates(dates, data_dir: str = "data", years: int = 10, log=print) -> np.ndarray:
+    """取得與 dates 對齊的每日現金年利率（小數，例如 0.045），來源為 ^IRX。"""
+    irx = load_history(CASH_TICKER, data_dir, years=years, name=CASH_FILE, log=log)
+    s = irx.set_index("date")["close"].astype(float) / 100.0
+    s.index = pd.to_datetime(s.index)
+    idx = pd.to_datetime(pd.Series(dates))
+    aligned = s.reindex(s.index.union(idx)).sort_index().ffill().bfill().reindex(idx)
+    return aligned.clip(lower=0.0).to_numpy()
 
 
 def record(ticker: str, data_dir: str = "data") -> pd.DataFrame:

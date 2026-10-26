@@ -167,8 +167,8 @@ def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
     turnover.iloc[0] = abs(pos.iloc[0]) if len(pos) else 0.0
     cost = turnover * (fee_bps + slippage_bps) / 10_000.0
     ret = pos * asset_ret - cost
-    if cash_rate:
-        ret = ret + (1.0 - pos.abs()).clip(lower=0.0) * cash_rate / TRADING_DAYS
+    if np.any(np.asarray(cash_rate) != 0):
+        ret = ret + (1.0 - pos.abs()).clip(lower=0.0) * np.asarray(cash_rate) / TRADING_DAYS
     equity = (1.0 + ret).cumprod()
 
     trades_log = _extract_trades(pos, ret, df["date"])
@@ -177,6 +177,25 @@ def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
     trades = len(trades_log)   # 以實際進出場筆數計，避免 vol targeting 的每日微調灌水
     return Result(equity=equity, returns=ret, positions=pos, trades=trades,
                   meta={"strategy": repr(strategy), "trades_log": trades_log})
+
+
+def run_constant_mix(df: pd.DataFrame, exposure: float, cash_rate=0.0) -> Result:
+    """固定比例配置：每天維持 exposure 的資金在標的、其餘放現金（每日再平衡、不計成本）。
+
+    用來當逢跌加碼的公平對照組：持股比例相同、但不挑時機。
+    cash_rate 可為固定年利率，或與 df 等長的每日年利率序列。
+    """
+    df = df.reset_index(drop=True)
+    r = df["close"].pct_change().fillna(0.0).to_numpy()
+    n = len(r)
+    rates = np.broadcast_to(np.asarray(cash_rate, dtype=float) / TRADING_DAYS, (n,))
+    ret = exposure * r + (1.0 - exposure) * rates
+    if n:
+        ret[0] = 0.0
+    idx = pd.to_datetime(df["date"])
+    ret = pd.Series(ret, index=idx)
+    equity = (1.0 + ret).cumprod()
+    return Result(equity=equity, returns=ret, positions=pd.Series(exposure, index=idx))
 
 
 def run_rows(universe: dict[str, pd.DataFrame],

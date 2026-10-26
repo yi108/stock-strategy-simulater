@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from . import indicators as ind
@@ -350,11 +351,12 @@ class DipBuy(Strategy):
         mode = int(p["mode"])
         cooldown = max(1, int(p["cooldown"]))
         cost = (fee_bps + slippage_bps) / 10_000.0
-        daily_cash = cash_rate / 252.0
 
         close = df["close"].to_numpy(dtype=float)
         dates = df["date"].astype(str).to_numpy()
         n = len(close)
+        # cash_rate 可為固定年利率，或與 df 等長的每日年利率序列
+        daily_cash = np.broadcast_to(np.asarray(cash_rate, dtype=float) / 252.0, (n,))
         cash, shares = 1.0, 0.0
         lots: list[tuple[int, float, float]] = []   # (日索引, 投入金額, 回撤)
 
@@ -376,7 +378,7 @@ class DipBuy(Strategy):
         for i in range(n):
             c = close[i]
             if i > 0:
-                cash *= 1.0 + daily_cash
+                cash *= 1.0 + daily_cash[i]
             if i == 0 and float(p["init_frac"]) > 0:
                 buy(0, float(p["init_frac"]), 0.0)
             if c >= peak:

@@ -7,6 +7,8 @@
   python -m simulator.cli compare -t DEMO_A            所有策略比一比
   python -m simulator.cli optimize -s macd -t DEMO_A   退火找最佳參數
   python -m simulator.cli optimize-portfolio -s macd_boll   退火找組合權重+參數
+  python -m simulator.cli dip -t QQQ QLD                逢跌加碼 vs 買進持有 vs 固定配置
+  python -m simulator.cli rolling -t QQQ QLD            逢跌加碼多起點滾動測試（10 年）
 """
 
 from __future__ import annotations
@@ -15,6 +17,9 @@ import argparse
 import json
 import os
 import sys
+import unicodedata
+
+import pandas as pd
 
 from . import annealing, data
 from .backtest import run_portfolio, run_signals
@@ -37,6 +42,26 @@ def _parse_params(pairs: list[str]) -> dict:
 
 def _print(obj):
     print(json.dumps(obj, ensure_ascii=False, indent=2, default=str))
+
+
+def _width(s: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in s)
+
+
+def _table(header: list[str], rows: list[list[str]]) -> None:
+    """依「顯示寬度」對齊的表格（中文字算兩格）；第一欄靠左、其餘靠右。"""
+    cols = [header] + rows
+    widths = [max(_width(r[i]) for r in cols) for i in range(len(header))]
+    for r in cols:
+        cells = []
+        for i, cell in enumerate(r):
+            pad = " " * (widths[i] - _width(cell))
+            cells.append(cell + pad if i == 0 else pad + cell)
+        print("  ".join(cells))
+
+
+def _pct(v, digits: int = 2) -> str:
+    return "—" if v is None or v != v else f"{v:.{digits}%}"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -108,8 +133,24 @@ def _main(argv: list[str] | None = None) -> None:
                    help="0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買")
     p.add_argument("--cooldown", type=int, default=5)
     p.add_argument("--init-frac", type=float, default=0.0, help="第一天先投入的比例")
-    p.add_argument("--cash-rate", type=float, default=0.0, help="閒置現金年利率，例如 0.04")
+    p.add_argument("--cash-rate", default="0",
+                   help="閒置現金年利率，例如 0.04；auto = 用 13 週國庫券(^IRX)每日實際利率")
     p.add_argument("--fee-bps", type=float, default=10.0)
+
+    p = sub.add_parser("rolling", help="逢跌加碼多起點滾動測試：每月一個起點各跑一年，對照買進持有")
+    p.add_argument("-t", "--tickers", nargs="+", required=True)
+    p.add_argument("--years", type=int, default=10, help="使用最近幾年的歷史（預設 10）")
+    p.add_argument("--window-days", type=int, default=252, help="每段長度（交易日，預設 252 ≈ 一年）")
+    p.add_argument("--step-days", type=int, default=21, help="起點間隔（交易日，預設 21 ≈ 一個月）")
+    p.add_argument("--triggers", nargs="+", type=float, default=[0.03, 0.05, 0.10])
+    p.add_argument("--buy-fracs", nargs="+", type=float, default=[0.05, 0.10])
+    p.add_argument("--mode", type=int, default=0, choices=[0, 1, 2])
+    p.add_argument("--cooldown", type=int, default=5)
+    p.add_argument("--init-frac", type=float, default=0.0)
+    p.add_argument("--cash-rate", default="auto",
+                   help="auto（預設）= ^IRX 國庫券每日實際利率；或固定值如 0.04")
+    p.add_argument("--fee-bps", type=float, default=10.0)
+    p.add_argument("--out-dir", default="results", help="每段明細 CSV 的輸出目錄")
 
     p = sub.add_parser("rotation", help="動量輪動：每期買過去表現最強的 N 檔")
     p.add_argument("-t", "--tickers", nargs="*", default=None, help="預設用 data 目錄全部")
@@ -132,6 +173,15 @@ def _main(argv: list[str] | None = None) -> None:
 
     def load(ticker: str):
         return data.load_or_fetch(ticker, args.data_dir, period=args.fetch_period)
+
+    def cash_for(df, years: int = 10):
+        """--cash-rate 轉成固定值或與 df 對齊的每日利率序列。"""
+        if str(args.cash_rate).lower() == "auto":
+            return data.load_cash_rates(df["date"], args.data_dir, years=years)
+        try:
+            return float(args.cash_rate)
+        except ValueError:
+            raise data.DataError(f"--cash-rate 要是數字（如 0.04）或 auto，收到 {args.cash_rate!r}")
 
     def load_uni(tickers):
         if tickers:
@@ -211,25 +261,82 @@ def _main(argv: list[str] | None = None) -> None:
                   f"樣本外 {g['oos_return']:+.2%}")
 
     elif args.cmd == "dip":
+        from .backtest import run_constant_mix
+        from .research import dip_configs
         for t in args.tickers:
             df = load(t)
+            span = (pd.Timestamp(df["date"].iloc[-1]) - pd.Timestamp(df["date"].iloc[0])).days
+            cash = cash_for(df, years=max(1, -(-span // 365)))
             dd = (df["close"] / df["close"].cummax() - 1).min()
             bh = run_signals(df, make("buyhold"), fee_bps=args.fee_bps)
             print(f"\n=== {t}  {df['date'].iloc[0]} ~ {df['date'].iloc[-1]}  "
                   f"（期間最大回撤 {dd:.1%}）===")
-            print(f"{'設定':<22}{'報酬':>9}{'最大回撤':>9}{'Sharpe':>8}"
-                  f"{'買入次數':>8}{'平均持股':>8}{'期末持股':>8}")
-            print(f"{'買進持有（100%）':<20}{bh.total_return:>9.2%}{bh.max_drawdown:>9.2%}"
-                  f"{bh.sharpe:>8.2f}{1:>8}{1:>8.0%}{1:>8.0%}")
-            for frac in args.buy_fracs:
-                for trig in args.triggers:
-                    strat = make("dip", dd_trigger=trig, buy_frac=frac, mode=args.mode,
-                                 cooldown=args.cooldown, init_frac=args.init_frac)
-                    res = run_signals(df, strat, fee_bps=args.fee_bps, cash_rate=args.cash_rate)
-                    label = f"跌{trig:.0%}買{frac:.0%}"
-                    print(f"{label:<24}{res.total_return:>9.2%}{res.max_drawdown:>9.2%}"
-                          f"{res.sharpe:>8.2f}{res.trades:>8}"
-                          f"{res.positions.mean():>8.0%}{res.positions.iloc[-1]:>8.0%}")
+            rows = [["買進持有（100%）", _pct(bh.total_return), _pct(bh.max_drawdown),
+                     f"{bh.sharpe:.2f}", "1", "100%", "100%", "—", "—"]]
+            for c in dip_configs(args.triggers, args.buy_fracs, args.mode,
+                                 args.cooldown, args.init_frac):
+                params = {k: v for k, v in c.items() if k != "label"}
+                res = run_signals(df, make("dip", **params), fee_bps=args.fee_bps,
+                                  cash_rate=cash)
+                expo = float(res.positions.mean())
+                mix = run_constant_mix(df, expo, cash)
+                rows.append([c["label"], _pct(res.total_return), _pct(res.max_drawdown),
+                             f"{res.sharpe:.2f}", str(res.trades), _pct(expo, 0),
+                             _pct(float(res.positions.iloc[-1]), 0), _pct(mix.total_return),
+                             f"{(res.total_return - mix.total_return) * 100:+.2f}"])
+            _table(["設定", "報酬", "最大回撤", "Sharpe", "買入次數", "平均持股", "期末持股",
+                    "固定配置報酬", "差距(百分點)"], rows)
+        print("\n固定配置 = 每天維持與該設定「平均持股」相同的比例在標的、其餘放現金，"
+              "不挑時機；差距為正代表逢跌買進的時機有加分。")
+
+    elif args.cmd == "rolling":
+        from .research import by_start_year, dip_configs, rolling_dip, summarize
+        configs = dip_configs(args.triggers, args.buy_fracs, args.mode,
+                              args.cooldown, args.init_frac)
+        focus = configs[0]["label"]
+        os.makedirs(args.out_dir, exist_ok=True)
+        for t in args.tickers:
+            df = data.load_history(t, args.data_dir, years=args.years)
+            cut = pd.Timestamp.today().normalize() - pd.DateOffset(years=args.years)
+            df = df[pd.to_datetime(df["date"]) >= cut].reset_index(drop=True)
+            cash = cash_for(df, years=args.years)
+            if isinstance(cash, float):
+                cash_note = f"固定 {cash:.2%}"
+            else:
+                cash_note = f"^IRX 國庫券每日實際利率（期間平均 {cash.mean():.2%}，" \
+                            f"最低 {cash.min():.2%}，最高 {cash.max():.2%}）"
+            win = rolling_dip(df, configs, window=args.window_days, step=args.step_days,
+                              cash_rate=cash, fee_bps=args.fee_bps)
+            n_win = win["start"].nunique()
+            print(f"\n=== {t} 滾動測試：{df['date'].iloc[0]} ~ {df['date'].iloc[-1]}，"
+                  f"每 {args.step_days} 個交易日一個起點、每段 {args.window_days} 天，共 {n_win} 段 ===")
+            print(f"現金利率：{cash_note}")
+            summ = summarize(win)
+            rows = [[r["config"], _pct(r["mean"]), _pct(r["median"]), _pct(r["worst"]),
+                     _pct(r["best"]), _pct(r["beat_bh"], 0), _pct(r["beat_mix"], 0),
+                     _pct(r["median_expo"], 0), _pct(r["worst_mdd"]), _pct(r["spent"], 0)]
+                    for _, r in summ.iterrows()]
+            _table(["設定", "平均報酬", "中位報酬", "最差", "最好", "勝買進持有",
+                    "勝固定配置", "中位持股", "最差回撤", "資金用盡"], rows)
+
+            print(f"\n【{focus}】依起始年份（各欄為中位數報酬）：")
+            yr = by_start_year(win, focus)
+            _table(["起始年", "段數", "逢跌加碼", "買進持有", "固定配置", "勝買進持有"],
+                   [[r["year"], str(r["n"]), _pct(r["dip"]), _pct(r["bh"]), _pct(r["mix"]),
+                     _pct(r["beat_bh"], 0)] for _, r in yr.iterrows()])
+
+            g = win[win["config"] == focus]
+            print(f"\n【{focus}】報酬最差的 3 個起點：")
+            _table(["期間", "逢跌加碼", "買進持有", "期末持股"],
+                   [[f"{r['start']} ~ {r['end']}", _pct(r["dip_ret"]), _pct(r["bh_ret"]),
+                     _pct(r["end_expo"], 0)] for _, r in g.nsmallest(3, "dip_ret").iterrows()])
+
+            out = os.path.join(args.out_dir, f"rolling_{t}.csv")
+            win.to_csv(out, index=False, encoding="utf-8-sig")
+            print(f"\n每段明細已存到 {out}")
+        print("\n說明：每段都從全現金開始、以該段第一天為高點；相鄰起點的區間高度重疊，"
+              "勝率不是獨立樣本，看趨勢與最差情況比看精確百分比更有意義。"
+              f"\n「資金用盡」= 期末持股 ≥ 98% 的段數比例；按年份與最差起點的表格以第一個設定（{focus}）為準。")
 
     elif args.cmd == "rotation":
         from .backtest import run_rotation
