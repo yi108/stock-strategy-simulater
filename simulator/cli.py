@@ -19,6 +19,7 @@ import os
 import sys
 import unicodedata
 
+import numpy as np
 import pandas as pd
 
 from . import annealing, data
@@ -151,6 +152,17 @@ def _main(argv: list[str] | None = None) -> None:
                    help="auto（預設）= ^IRX 國庫券每日實際利率；或固定值如 0.04")
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results", help="每段明細 CSV 的輸出目錄")
+
+    p = sub.add_parser("best", help="策略實驗室：多種策略同場比較，依可承受回撤挑出最佳")
+    p.add_argument("-t", "--tickers", nargs="+", default=["QQQ", "QLD"],
+                   help="第一檔為主要標的（預設 QQQ QLD）；多檔時只用共同日期")
+    p.add_argument("--years", type=int, default=20)
+    p.add_argument("--window-days", type=int, default=252)
+    p.add_argument("--step-days", type=int, default=21)
+    p.add_argument("--sma-days", type=int, default=200, help="均線濾網天數（預設 200）")
+    p.add_argument("--cash-rate", default="auto")
+    p.add_argument("--fee-bps", type=float, default=10.0)
+    p.add_argument("--out-dir", default="results")
 
     p = sub.add_parser("rotation", help="動量輪動：每期買過去表現最強的 N 檔")
     p.add_argument("-t", "--tickers", nargs="*", default=None, help="預設用 data 目錄全部")
@@ -288,6 +300,59 @@ def _main(argv: list[str] | None = None) -> None:
                     "固定配置報酬", "差距(百分點)"], rows)
         print("\n固定配置 = 每天維持與該設定「平均持股」相同的比例在標的、其餘放現金，"
               "不挑時機；差距為正代表逢跌買進的時機有加分。")
+
+    elif args.cmd == "best":
+        from .research import pick_by_risk, strategy_lab
+        # 起點前若有更早的資料會拿來給均線暖機；沒有的話起點會往後延 sma_days 天
+        raw = {t: data.load_history(t, args.data_dir, years=args.years)
+               for t in args.tickers}
+        prices = data.align_universe(raw)
+        dates = prices[args.tickers[0]]["date"]
+        cut = pd.Timestamp.today().normalize() - pd.DateOffset(years=args.years)
+        first_start = int((pd.to_datetime(dates) < cut).sum())
+        cash = cash_for(prices[args.tickers[0]], years=args.years)
+        if isinstance(cash, float):
+            cash = np.full(len(dates), cash)
+        win, summ = strategy_lab(prices, cash, first_start, window=args.window_days,
+                                 step=args.step_days, fee_bps=args.fee_bps,
+                                 sma_days=args.sma_days)
+        base = f"{args.tickers[0]} 買進持有"
+        print(f"\n=== 策略實驗室：{'、'.join(args.tickers)}，起點 {win['start'].iloc[0]} ~ "
+              f"{win['start'].iloc[-1]}，共 {win['start'].nunique()} 段一年期區間 ===")
+        print(f"現金：^IRX 國庫券每日實際利率（平均 {np.mean(cash):.2%}）"
+              if str(args.cash_rate).lower() == "auto" else f"現金：固定 {np.mean(cash):.2%}")
+        rows = [[r["strategy"], _pct(r["mean"]), _pct(r["median"]), _pct(r["p10"]),
+                 _pct(r["worst"]), _pct(r["worst_mdd"]),
+                 "—" if r["strategy"] == base else _pct(r["beat_base"], 0),
+                 _pct(r["full_cagr"]), _pct(r["full_mdd"])]
+                for _, r in summ.sort_values("median", ascending=False).iterrows()]
+        _table(["策略", "一年平均", "一年中位", "最差10%", "最差一年", "年內最差回撤",
+                f"勝{base}", "全期年化", "全期最大回撤"], rows)
+
+        print("\n依你能承受的「任一年內最大回撤」挑選（以一年中位數報酬最高者為準）：")
+        picks = []
+        for p in pick_by_risk(summ):
+            label = "不限" if p["budget"] is None else f"不超過 -{p['budget']:.0%}"
+            r = p["row"]
+            if r is None:
+                picks.append([label, "（沒有符合的策略）", "", "", "", ""])
+            else:
+                picks.append([label, r["strategy"], _pct(r["median"]), _pct(r["worst"]),
+                              _pct(r["worst_mdd"]), _pct(r["full_cagr"])])
+        _table(["可承受回撤", "最佳策略", "一年中位", "最差一年", "年內最差回撤", "全期年化"],
+               picks)
+
+        os.makedirs(args.out_dir, exist_ok=True)
+        tag = "_".join(args.tickers)
+        win.to_csv(os.path.join(args.out_dir, f"best_{tag}_windows.csv"), index=False,
+                   encoding="utf-8-sig")
+        summ.to_csv(os.path.join(args.out_dir, f"best_{tag}_summary.csv"), index=False,
+                    encoding="utf-8-sig")
+        print(f"\n明細已存到 {args.out_dir}{os.sep}best_{tag}_*.csv")
+        print("說明：固定比例為每日再平衡、不計再平衡成本；均線濾網＝收盤在均線之上隔日持有，"
+              "否則轉國庫券（含交易成本）；逢跌加碼每段從全現金開始。"
+              "\n「全期」＝從第一個起點一路持有到最後；逢跌加碼是一年期策略，沒有全期數字。"
+              "\n挑選結果是對過去資料的最佳，不保證未來；相鄰區間高度重疊，看大方向勝過看小數點。")
 
     elif args.cmd == "rolling":
         from .research import by_start_year, dip_configs, rolling_dip, summarize
