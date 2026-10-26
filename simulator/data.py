@@ -101,7 +101,8 @@ def fetch_stooq(ticker: str, years: int = 1) -> pd.DataFrame:
     """從 stooq.com 抓日 K（美股代號加 .us，例如 aapl.us；台股不支援）。"""
     end = date.today()
     start = end - timedelta(days=int(365.25 * years))
-    url = (f"https://stooq.com/q/d/l/?s={ticker.lower()}&i=d"
+    symbol = ticker.lower() if "." in ticker else f"{ticker.lower()}.us"
+    url = (f"https://stooq.com/q/d/l/?s={symbol}&i=d"
            f"&d1={start:%Y%m%d}&d2={end:%Y%m%d}")
     with urllib.request.urlopen(url, timeout=30) as resp:
         text = resp.read().decode("utf-8")

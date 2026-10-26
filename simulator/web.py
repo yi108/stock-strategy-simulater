@@ -108,7 +108,8 @@ def _load_universe(tickers) -> dict[str, pd.DataFrame]:
 def _common(body: dict) -> dict:
     return {"fee_bps": float(body.get("fee_bps", 10.0)),
             "slippage_bps": float(body.get("slippage_bps", 0.0)),
-            "vol_target": float(body.get("vol_target", 0.0))}
+            "vol_target": float(body.get("vol_target", 0.0)),
+            "cash_rate": float(body.get("cash_rate", 0.0))}
 
 
 def _benchmark(universe, fee_bps: float):
@@ -130,13 +131,23 @@ def _result_payload(res, universe, fee_bps: float, train_frac: float = 1.0) -> d
     idx = res.equity.index
     bench_eq = bench.equity.reindex(idx).ffill()
     rows = []
+    buyhold: dict[str, dict] = {}
     for r in res.meta.get("rows", []):
         rr = r["result"]
+        t = r["ticker"]
+        if t not in buyhold:
+            bh = run_rows({t: universe[t]}, [(t, make("buyhold"), 1.0)], fee_bps=fee_bps)
+            buyhold[t] = {"ticker": t, "summary": _plain(bh),
+                          "equity": _series(bh.equity.reindex(idx).ffill().fillna(1.0))}
         rows.append({
-            "label": f'{r["ticker"]} · {r["strategy"].NAME}',
+            "label": f'{t} · {r["strategy"].NAME}',
+            "ticker": t,
             "weight": r["weight"],
             "equity": _series(rr.equity.reindex(idx).ffill().fillna(1.0)),
             "summary": _plain(rr),
+            "avg_exposure": rr.meta.get("avg_exposure"),
+            "end_exposure": rr.meta.get("end_exposure"),
+            "buyhold": buyhold[t]["summary"],
             "trades": rr.meta.get("trades_log", [])[:60],
         })
     payload = {
@@ -147,6 +158,7 @@ def _result_payload(res, universe, fee_bps: float, train_frac: float = 1.0) -> d
         "benchmark": _series(bench_eq),
         "benchmark_summary": _plain(bench),
         "rows": rows,
+        "buyhold": list(buyhold.values()),
     }
     if train_frac < 1.0:
         n = len(res.returns)

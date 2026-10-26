@@ -153,6 +153,7 @@ def optimize_rows(universe: dict[str, pd.DataFrame], specs: list[dict],
                   opt_weights: bool = True, opt_params: bool = True,
                   objective: str = "sharpe", fee_bps: float = 10.0,
                   slippage_bps: float = 0.0, vol_target: float = 0.0,
+                  cash_rate: float = 0.0,
                   train_frac: float = 1.0, eval_slice: tuple[int, int] | None = None,
                   steps: int = 600, restarts: int = 1, seed: int = 42,
                   on_step: ProgressFn | None = None, should_stop: StopFn | None = None,
@@ -191,7 +192,8 @@ def optimize_rows(universe: dict[str, pd.DataFrame], specs: list[dict],
         return rows
 
     run = lambda state: run_rows(universe, decode(state), fee_bps=fee_bps,
-                                 slippage_bps=slippage_bps, vol_target=vol_target)
+                                 slippage_bps=slippage_bps, vol_target=vol_target,
+                                 cash_rate=cash_rate)
 
     first = run(init)
     n = len(first.returns)
@@ -230,7 +232,7 @@ def optimize_rows(universe: dict[str, pd.DataFrame], specs: list[dict],
 
     best_rows = decode(log.best_state)
     res = run_rows(universe, best_rows, fee_bps=fee_bps,
-                   slippage_bps=slippage_bps, vol_target=vol_target)
+                   slippage_bps=slippage_bps, vol_target=vol_target, cash_rate=cash_rate)
     total = sum(w for _, _, w in best_rows) or 1.0
     best_specs = []
     for (t, strat, w), spec in zip(best_rows, specs):
@@ -302,6 +304,7 @@ def walk_forward(universe: dict[str, pd.DataFrame], specs: list[dict],
                  opt_weights: bool = True, opt_params: bool = True,
                  objective: str = "sharpe", fee_bps: float = 10.0,
                  slippage_bps: float = 0.0, vol_target: float = 0.0,
+                  cash_rate: float = 0.0,
                  steps: int = 120, restarts: int = 1, seed: int = 42,
                  on_step: ProgressFn | None = None,
                  should_stop: StopFn | None = None) -> dict:
@@ -335,7 +338,7 @@ def walk_forward(universe: dict[str, pd.DataFrame], specs: list[dict],
         best_specs, _, log = optimize_rows(
             train_uni, cur_specs, opt_weights=opt_weights, opt_params=opt_params,
             objective=objective, fee_bps=fee_bps, slippage_bps=slippage_bps,
-            vol_target=vol_target, eval_slice=(max(0, start - train_days), start),
+            vol_target=vol_target, cash_rate=cash_rate, eval_slice=(max(0, start - train_days), start),
             steps=steps, restarts=restarts, seed=seed + k,
             on_step=seg_progress, should_stop=should_stop)
         done_base += steps * max(1, restarts)
@@ -345,7 +348,7 @@ def walk_forward(universe: dict[str, pd.DataFrame], specs: list[dict],
         rows = [(s["ticker"], STRATEGIES[s["strategy"]](**s["params"]), s["weight"])
                 for s in best_specs]
         res = run_rows(eval_uni, rows, fee_bps=fee_bps,
-                       slippage_bps=slippage_bps, vol_target=vol_target)
+                       slippage_bps=slippage_bps, vol_target=vol_target, cash_rate=cash_rate)
         piece = res.returns.iloc[start:end]
         oos_parts.append(piece)
         seg_ret = float((1 + piece).prod() - 1)
@@ -373,6 +376,7 @@ def scan_params(universe: dict[str, pd.DataFrame], specs: list[dict], row_i: int
                 px: str, py: str, nx: int = 13, ny: int = 13,
                 objective: str = "sharpe", fee_bps: float = 10.0,
                 slippage_bps: float = 0.0, vol_target: float = 0.0,
+                  cash_rate: float = 0.0,
                 train_frac: float = 1.0) -> dict:
     """固定其他設定，掃描第 row_i 列策略的兩個參數網格，回傳目標函數值矩陣。
     好的參數解應該是一整片高原；孤立尖峰是過擬合警訊。"""
@@ -411,7 +415,7 @@ def scan_params(universe: dict[str, pd.DataFrame], specs: list[dict], row_i: int
                 rows.append((t, c(**p), w))
             try:
                 res = run_rows(universe, rows, fee_bps=fee_bps,
-                               slippage_bps=slippage_bps, vol_target=vol_target)
+                               slippage_bps=slippage_bps, vol_target=vol_target, cash_rate=cash_rate)
                 if n_train is None:
                     n_train = int(len(res.returns) * train_frac) if train_frac < 1.0 else -1
                 if n_train > 0:

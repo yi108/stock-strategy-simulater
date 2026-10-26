@@ -92,6 +92,7 @@ python -m simulator.cli record -t AAPL MSFT 2330.TW
 | `rsi` | RSI 均值回歸：超賣買進、回中性出場 | window, oversold, exit_level |
 | `sma` | 均線交叉：快線上穿慢線做多 | fast, slow |
 | `tsmom` | 時序動量：過去 N 日報酬為正做多 | lookback |
+| `dip` | 逢跌加碼：從高點回撤達門檻就投入固定比例資金，只買不賣 | dd_trigger, buy_frac, mode, cooldown, init_frac |
 
 除 `buyhold` 外，所有策略另有共通參數：`sl_pct`/`tp_pct` 停損停利
 （0 = 關閉，收盤價近似執行）；可做空的策略（`macd_boll` 除外）有
@@ -103,6 +104,25 @@ python -m simulator.cli record -t AAPL MSFT 2330.TW
 python -m simulator.cli backtest -s macd -t AAPL -p fast=8 slow=30 signal=7
 ```
 
+## 逢跌加碼研究（例：QQQ vs QLD）
+
+`dip` 策略從全現金出發（`init_frac` 可設定第一天先投入的比例），
+每當價格從期間高點回撤達 `dd_trigger` 就投入 `buy_frac` × 初始資金，只買不賣：
+
+- `mode 0`：每多跌一階買一次（-3%、-6%、-9%…），創新高後重置
+- `mode 1`：比「上次買價」再跌 `dd_trigger` 才買
+- `mode 2`：只要回撤 ≥ `dd_trigger`，每 `cooldown` 個交易日買一次
+
+```bash
+python -m simulator.cli fetch -t QQQ QLD --period 1y
+python -m simulator.cli dip -t QQQ QLD --triggers 0.03 0.05 0.10 --buy-fracs 0.05 0.10 --cash-rate 0.04
+```
+
+網頁上把兩列都設成 `dip`（一列 QQQ、一列 QLD），結果區的對照表會並列每列的
+報酬、回撤、平均/期末持股比例，以及同一檔買進持有的報酬與回撤。
+建議把「現金年利率」設成貨幣基金利率，未投入的現金才不會被當成零報酬；
+熱圖選 `dd_trigger × buy_frac` 可以一次看完所有觸發幅度與投入比例的組合。
+
 ## 回測規則
 
 - 訊號以**當日收盤**計算，**次日**才生效（`shift(1)`），避免前視偏誤
@@ -110,6 +130,7 @@ python -m simulator.cli backtest -s macd -t AAPL -p fast=8 slow=30 signal=7
 - 停損/停利以收盤價近似：收盤觸發、隔日出場，之後維持空手直到
   原始訊號改變才重新進場
 - 波動率目標（vol target）：倉位 × min(1, 目標年化波動 / 近 20 日年化波動)
+- 現金年利率（`cash_rate`）：未投入的現金每日按年利率 / 252 計息（預設 0）
 - 績效指標：總報酬、CAGR、年化 Sharpe、最大回撤、交易次數（實際進出場筆數）
 
 ## 模擬退火

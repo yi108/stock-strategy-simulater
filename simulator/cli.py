@@ -86,6 +86,19 @@ def main(argv: list[str] | None = None) -> None:
                    choices=["sharpe", "total_return", "calmar_mix"])
     p.add_argument("--fee-bps", type=float, default=10.0)
 
+    p = sub.add_parser("dip", help="逢跌加碼研究：多檔 × 多種觸發幅度，對照買進持有")
+    p.add_argument("-t", "--tickers", nargs="+", required=True)
+    p.add_argument("--triggers", nargs="+", type=float, default=[0.02, 0.03, 0.05, 0.08, 0.10],
+                   help="回撤觸發幅度，例如 0.03 = 3%%")
+    p.add_argument("--buy-fracs", nargs="+", type=float, default=[0.05],
+                   help="每次投入初始資金的比例，例如 0.05 = 5%%")
+    p.add_argument("--mode", type=int, default=0, choices=[0, 1, 2],
+                   help="0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買")
+    p.add_argument("--cooldown", type=int, default=5)
+    p.add_argument("--init-frac", type=float, default=0.0, help="第一天先投入的比例")
+    p.add_argument("--cash-rate", type=float, default=0.0, help="閒置現金年利率，例如 0.04")
+    p.add_argument("--fee-bps", type=float, default=10.0)
+
     p = sub.add_parser("rotation", help="動量輪動：每期買過去表現最強的 N 檔")
     p.add_argument("-t", "--tickers", nargs="*", default=None, help="預設用 data 目錄全部")
     p.add_argument("--lookback", type=int, default=126)
@@ -173,6 +186,27 @@ def main(argv: list[str] | None = None) -> None:
         for g in wf["segments"]:
             print(f"  {g['test_start']} ~ {g['test_end']}  訓練分數 {g['train_score']:+.2f}  "
                   f"樣本外 {g['oos_return']:+.2%}")
+
+    elif args.cmd == "dip":
+        for t in args.tickers:
+            df = data.load_csv(f"{args.data_dir}/{t}.csv")
+            dd = (df["close"] / df["close"].cummax() - 1).min()
+            bh = run_signals(df, make("buyhold"), fee_bps=args.fee_bps)
+            print(f"\n=== {t}  {df['date'].iloc[0]} ~ {df['date'].iloc[-1]}  "
+                  f"（期間最大回撤 {dd:.1%}）===")
+            print(f"{'設定':<22}{'報酬':>9}{'最大回撤':>9}{'Sharpe':>8}"
+                  f"{'買入次數':>8}{'平均持股':>8}{'期末持股':>8}")
+            print(f"{'買進持有（100%）':<20}{bh.total_return:>9.2%}{bh.max_drawdown:>9.2%}"
+                  f"{bh.sharpe:>8.2f}{1:>8}{1:>8.0%}{1:>8.0%}")
+            for frac in args.buy_fracs:
+                for trig in args.triggers:
+                    strat = make("dip", dd_trigger=trig, buy_frac=frac, mode=args.mode,
+                                 cooldown=args.cooldown, init_frac=args.init_frac)
+                    res = run_signals(df, strat, fee_bps=args.fee_bps, cash_rate=args.cash_rate)
+                    label = f"跌{trig:.0%}買{frac:.0%}"
+                    print(f"{label:<24}{res.total_return:>9.2%}{res.max_drawdown:>9.2%}"
+                          f"{res.sharpe:>8.2f}{res.trades:>8}"
+                          f"{res.positions.mean():>8.0%}{res.positions.iloc[-1]:>8.0%}")
 
     elif args.cmd == "rotation":
         from .backtest import run_rotation

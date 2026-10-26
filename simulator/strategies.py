@@ -315,10 +315,110 @@ class TSMomentum(Strategy):
         return sig
 
 
+class DipBuy(Strategy):
+    """逢跌加碼：從高點回撤達 dd_trigger 就投入 buy_frac 的初始資金，只買不賣（mode 0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買一次）。
+
+    與訊號策略不同，這是以「現金 + 股數」逐筆累積的模擬：
+    - 初始資金 1.0，init_frac 為第一天就先投入的比例，其餘為現金
+    - 高點 = 回測期間至今的最高收盤價；創新高時重置加碼階梯
+    - 每次加碼金額 = buy_frac × 初始資金（現金不足時用剩下的全部）
+    - 於觸發當日收盤成交（等同收盤前下單），只收買進成本
+    - mode 0：回撤每跨過一個 dd_trigger 的整數倍買一次（-3%、-6%、-9%…）
+      mode 1：價格比「上次買價」（或高點）再跌 dd_trigger 才買
+      mode 2：只要回撤 ≥ dd_trigger，每隔 cooldown 個交易日買一次
+    """
+    NAME = "dip"
+    HAS_RISK = False
+    PARAM_SPACE: ParamSpace = {
+        "dd_trigger": (0.01, 0.20, "float"),
+        "buy_frac": (0.01, 0.50, "float"),
+        "mode": (0, 2, "int"),
+        "cooldown": (1, 20, "int"),
+        "init_frac": (0.0, 1.0, "float"),
+    }
+
+    @classmethod
+    def default_params(cls):
+        return {"dd_trigger": 0.03, "buy_frac": 0.05, "mode": 0,
+                "cooldown": 5, "init_frac": 0.0}
+
+    def simulate(self, df: pd.DataFrame, fee_bps: float = 10.0,
+                 slippage_bps: float = 0.0, cash_rate: float = 0.0) -> dict:
+        p = self.params
+        trig = max(1e-4, float(p["dd_trigger"]))
+        lot = max(0.0, float(p["buy_frac"]))
+        mode = int(p["mode"])
+        cooldown = max(1, int(p["cooldown"]))
+        cost = (fee_bps + slippage_bps) / 10_000.0
+        daily_cash = cash_rate / 252.0
+
+        close = df["close"].to_numpy(dtype=float)
+        dates = df["date"].astype(str).to_numpy()
+        n = len(close)
+        cash, shares = 1.0, 0.0
+        lots: list[tuple[int, float, float]] = []   # (日索引, 投入金額, 回撤)
+
+        def buy(i: int, amount: float, dd: float) -> None:
+            nonlocal cash, shares
+            amount = min(amount, cash)
+            if amount <= 1e-9:
+                return
+            shares += amount * (1.0 - cost) / close[i]
+            cash -= amount
+            lots.append((i, amount, dd))
+
+        peak = close[0] if n else 0.0
+        rung = 0
+        ref_price = None
+        last_buy_i = -10**9
+        equity = []
+        exposure = []
+        for i in range(n):
+            c = close[i]
+            if i > 0:
+                cash *= 1.0 + daily_cash
+            if i == 0 and float(p["init_frac"]) > 0:
+                buy(0, float(p["init_frac"]), 0.0)
+            if c >= peak:
+                peak, rung, ref_price = c, 0, None
+            dd = 1.0 - c / peak
+            if mode == 0:
+                k = int(dd / trig + 1e-9)
+                if k > rung:
+                    buy(i, lot * (k - rung), dd)
+                    rung = k
+            elif mode == 1:
+                ref = ref_price if ref_price is not None else peak
+                if c <= ref * (1.0 - trig):
+                    buy(i, lot, dd)
+                    ref_price = c
+            else:
+                if dd >= trig and i - last_buy_i >= cooldown:
+                    buy(i, lot, dd)
+                    last_buy_i = i
+            eq = cash + shares * c
+            equity.append(eq)
+            exposure.append(shares * c / eq if eq > 0 else 0.0)
+
+        last = n - 1
+        trades_log = [{
+            "entry": dates[i], "exit": dates[last],
+            "side": f"加碼 {amt:.1%}（回撤 {dd:.1%}）",
+            "days": last - i,
+            "ret": round(float(close[last] / close[i] * (1.0 - cost) - 1.0), 4),
+            "open": True,
+        } for i, amt, dd in lots]
+        return {"equity": equity, "exposure": exposure, "trades_log": trades_log,
+                "cash_left": cash}
+
+    def signals(self, df: pd.DataFrame) -> pd.Series:
+        return pd.Series(self.simulate(df)["exposure"], index=df.index)
+
+
 STRATEGIES: dict[str, type[Strategy]] = {
     cls.NAME: cls
     for cls in [BuyHold, MACDCross, BollingerMeanReversion, BollingerBreakout,
-                MACDBollinger, RSIReversion, SMACross, TSMomentum]
+                MACDBollinger, RSIReversion, SMACross, TSMomentum, DipBuy]
 }
 
 

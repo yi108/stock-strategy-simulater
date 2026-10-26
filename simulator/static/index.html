@@ -148,6 +148,7 @@ details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
       <div class="field"><label>手續費 (bps)</label><input id="fee" type="number" value="10" min="0" step="1"></div>
       <div class="field"><label>滑價 (bps)</label><input id="slippage" type="number" value="5" min="0" step="1"></div>
       <div class="field"><label>波動率目標（0 關閉）</label><input id="vol-target" type="number" value="0" min="0" step="0.05"></div>
+      <div class="field"><label>現金年利率 (%)</label><input id="cash-rate" type="number" value="0" min="0" step="0.5" title="空手/未投入的現金每年賺的利息，例如貨幣基金 4%"></div>
       <div class="field"><label>訓練／驗證切分</label>
         <select id="train-frac">
           <option value="1">不切分</option>
@@ -184,6 +185,11 @@ details > summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
     <h2>結果</h2>
     <div class="tiles" id="tiles"></div>
     <div class="tiles" id="split-tiles"></div>
+    <table id="row-compare" style="margin-bottom:12px"><thead><tr>
+      <th>組合列</th><th class="num">權重</th><th class="num">報酬</th><th class="num">最大回撤</th>
+      <th class="num">Sharpe</th><th class="num">平均持股</th><th class="num">期末持股</th>
+      <th class="num">同檔買進持有報酬</th><th class="num">買進持有回撤</th>
+    </tr></thead><tbody id="row-compare-body"></tbody></table>
     <div class="legend" id="legend"></div>
     <div class="chartwrap">
       <svg id="chart" width="100%" height="300" role="img" aria-label="淨值曲線"></svg>
@@ -406,7 +412,7 @@ function renderLegend(elId, series, redraw) {
     const chip = document.createElement("span");
     chip.className = "chip" + (s.on === false ? " off" : "");
     chip.innerHTML = `<span class="sw" style="background:${s.color}"></span>${s.label}`;
-    chip.onclick = () => { s.on = s.on === false; redraw(); };
+    chip.onclick = () => { s.on = s.on === false; chip.classList.toggle("off", s.on === false); redraw(); };
     lg.append(chip);
   });
 }
@@ -527,6 +533,10 @@ function renderRows() {
       d.append(lab, inp); wrap.append(d);
     });
     tdP.append(wrap);
+    const doc = document.createElement("div");
+    doc.className = "hint"; doc.style.marginTop = "4px";
+    doc.textContent = STRATS[row.strategy].doc;
+    tdP.append(doc);
 
     const tdW = document.createElement("td"); tdW.className = "num";
     const inW = document.createElement("input");
@@ -559,6 +569,7 @@ function commonCfg() {
     fee_bps: parseFloat($("fee").value) || 0,
     slippage_bps: parseFloat($("slippage").value) || 0,
     vol_target: parseFloat($("vol-target").value) || 0,
+    cash_rate: (parseFloat($("cash-rate").value) || 0) / 100,
     train_frac: parseFloat($("train-frac").value) || 1,
     objective: $("objective").value,
   };
@@ -630,10 +641,25 @@ function renderResult(p, kind) {
       (overfit ? tile("⚠ 過擬合警訊", "訓練≫驗證", "neg", "驗證期大幅走樣") : "");
   } else $("split-tiles").innerHTML = "";
 
+  const pctOrDash = v => v == null ? "—" : (v * 100).toFixed(0) + "%";
+  $("row-compare-body").innerHTML = p.rows.map(r => {
+    const rs = r.summary, bh = r.buyhold || {};
+    return `<tr><td>${r.label}</td><td class="num">${(r.weight*100).toFixed(1)}%</td>
+      <td class="num ${rs.total_return>=0?"pos":"neg"}">${fmtPct(rs.total_return)}</td>
+      <td class="num">${fmtPct(rs.max_drawdown)}</td>
+      <td class="num">${fmtNum(rs.sharpe)}</td>
+      <td class="num">${pctOrDash(r.avg_exposure)}</td>
+      <td class="num">${pctOrDash(r.end_exposure)}</td>
+      <td class="num ${bh.total_return>=0?"pos":"neg"}">${bh.total_return == null ? "—" : fmtPct(bh.total_return)}</td>
+      <td class="num">${bh.max_drawdown == null ? "—" : fmtPct(bh.max_drawdown)}</td></tr>`;
+  }).join("");
+
   const series = [
     { label: "組合", color: slot(0), values: p.portfolio, width: 2.5 },
     { label: "基準（等權買進持有）", color: css("--muted"), values: p.benchmark, dash: "5 4" },
     ...p.rows.map((r, i) => ({ label: r.label, color: slot(i + 1), values: r.equity, on: false })),
+    ...(p.buyhold || []).map((b, i) => ({ label: `買進持有 ${b.ticker}`, color: slot(p.rows.length + 1 + i),
+                                          values: b.equity, dash: "2 3", on: false })),
   ];
   const opts = { shadeFrom: p.split ? p.split.index : null, baseline: 1 };
   const redraw = () => eqChart.draw(series, p.dates, opts);
@@ -868,6 +894,7 @@ function renderLog() {
     if (c.fee_bps != null) $("fee").value = c.fee_bps;
     if (c.slippage_bps != null) $("slippage").value = c.slippage_bps;
     if (c.vol_target != null) $("vol-target").value = c.vol_target;
+    $("cash-rate").value = c.cash_rate != null ? +(c.cash_rate * 100).toFixed(2) : 0;
     if (c.train_frac != null) $("train-frac").value = String(c.train_frac);
     if (c.objective) $("objective").value = c.objective;
     if (c.steps) $("steps").value = c.steps;

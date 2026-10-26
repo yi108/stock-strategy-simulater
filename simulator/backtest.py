@@ -125,10 +125,28 @@ def _extract_trades(pos: pd.Series, ret: pd.Series, dates: pd.Series) -> list[di
     return trades
 
 
+def _run_simulated(df: pd.DataFrame, strategy: Strategy, fee_bps: float,
+                   slippage_bps: float, cash_rate: float) -> Result:
+    """自帶 simulate() 的策略（如逢跌加碼）：直接用它算出的淨值與持股比例。"""
+    sim = strategy.simulate(df, fee_bps=fee_bps, slippage_bps=slippage_bps,
+                            cash_rate=cash_rate)
+    idx = pd.to_datetime(df["date"])
+    equity = pd.Series(sim["equity"], index=idx)
+    ret = equity.pct_change()
+    ret.iloc[0] = equity.iloc[0] - 1.0
+    pos = pd.Series(sim["exposure"], index=idx)
+    return Result(equity=equity, returns=ret, positions=pos,
+                  trades=len(sim["trades_log"]),
+                  meta={"strategy": repr(strategy), "trades_log": sim["trades_log"]})
+
+
 def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
-                slippage_bps: float = 0.0, vol_target: float = 0.0) -> Result:
-    """對單一標的執行訊號策略回測。"""
+                slippage_bps: float = 0.0, vol_target: float = 0.0,
+                cash_rate: float = 0.0) -> Result:
+    """對單一標的執行訊號策略回測。cash_rate 為閒置現金的年利率（例如 0.04）。"""
     df = df.reset_index(drop=True)
+    if hasattr(strategy, "simulate"):
+        return _run_simulated(df, strategy, fee_bps, slippage_bps, cash_rate)
     close = df["close"]
     sig = strategy.signals(df).fillna(0.0).clip(-1, 1)
     eff = sig.shift(1).fillna(0.0).to_numpy(copy=True)   # 次日生效
@@ -149,6 +167,8 @@ def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
     turnover.iloc[0] = abs(pos.iloc[0]) if len(pos) else 0.0
     cost = turnover * (fee_bps + slippage_bps) / 10_000.0
     ret = pos * asset_ret - cost
+    if cash_rate:
+        ret = ret + (1.0 - pos.abs()).clip(lower=0.0) * cash_rate / TRADING_DAYS
     equity = (1.0 + ret).cumprod()
 
     trades_log = _extract_trades(pos, ret, df["date"])
@@ -162,7 +182,7 @@ def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
 def run_rows(universe: dict[str, pd.DataFrame],
              rows: list[tuple[str, Strategy, float]],
              fee_bps: float = 10.0, slippage_bps: float = 0.0,
-             vol_target: float = 0.0) -> Result:
+             vol_target: float = 0.0, cash_rate: float = 0.0) -> Result:
     """自由組合回測：rows 為 (ticker, Strategy, weight) 列表。
 
     不以 ticker 為 key——同一檔股票可以重複出現、搭配不同策略與權重。
@@ -174,8 +194,8 @@ def run_rows(universe: dict[str, pd.DataFrame],
     per = []
     trades = 0
     for t, s, w in active:
-        r = run_signals(universe[t], s, fee_bps=fee_bps,
-                        slippage_bps=slippage_bps, vol_target=vol_target)
+        r = run_signals(universe[t], s, fee_bps=fee_bps, slippage_bps=slippage_bps,
+                        vol_target=vol_target, cash_rate=cash_rate)
         per.append((t, s, w / total, r))
         trades += r.trades
     ret_df = pd.DataFrame({i: p[3].returns for i, p in enumerate(per)}).dropna()
@@ -186,8 +206,12 @@ def run_rows(universe: dict[str, pd.DataFrame],
     row_results = []
     for i, (t, s, w, r) in enumerate(per):
         eq = (1.0 + ret_df[i]).cumprod()
-        row_res = Result(equity=eq, returns=ret_df[i], positions=ret_df[i] * 0,
-                         trades=r.trades, meta={"trades_log": r.meta.get("trades_log", [])})
+        expo = r.positions.reindex(ret_df.index).abs()
+        row_res = Result(equity=eq, returns=ret_df[i], positions=expo,
+                         trades=r.trades,
+                         meta={"trades_log": r.meta.get("trades_log", []),
+                               "avg_exposure": round(float(expo.mean()), 4),
+                               "end_exposure": round(float(expo.iloc[-1]), 4)})
         row_results.append({"ticker": t, "strategy": s, "weight": round(w, 4),
                             "result": row_res})
     return Result(equity=equity, returns=port_ret, positions=ret_df * 0, trades=trades,
