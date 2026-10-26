@@ -142,8 +142,13 @@ def _run_simulated(df: pd.DataFrame, strategy: Strategy, fee_bps: float,
 
 def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
                 slippage_bps: float = 0.0, vol_target: float = 0.0,
-                cash_rate: float = 0.0) -> Result:
-    """對單一標的執行訊號策略回測。cash_rate 為閒置現金的年利率（例如 0.04）。"""
+                cash_rate: float = 0.0, short_fee: float = 0.0) -> Result:
+    """對單一標的執行訊號策略回測。
+
+    cash_rate：閒置現金的年利率（例如 0.04），可為與 df 等長的每日序列。
+    short_fee：做空部位的年費用。做空以反向 ETF 的方式計算：空單部位賺
+    cash_rate、扣 short_fee（例如 PSQ 約 0.0095）。
+    """
     df = df.reset_index(drop=True)
     if hasattr(strategy, "simulate"):
         return _run_simulated(df, strategy, fee_bps, slippage_bps, cash_rate)
@@ -169,6 +174,9 @@ def run_signals(df: pd.DataFrame, strategy: Strategy, fee_bps: float = 10.0,
     ret = pos * asset_ret - cost
     if np.any(np.asarray(cash_rate) != 0):
         ret = ret + (1.0 - pos.abs()).clip(lower=0.0) * np.asarray(cash_rate) / TRADING_DAYS
+    if short_fee or np.any(np.asarray(cash_rate) != 0):
+        short = (-pos).clip(lower=0.0)
+        ret = ret + short * (np.asarray(cash_rate) - short_fee) / TRADING_DAYS
     equity = (1.0 + ret).cumprod()
 
     trades_log = _extract_trades(pos, ret, df["date"])

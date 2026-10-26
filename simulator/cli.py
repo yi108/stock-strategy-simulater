@@ -134,6 +134,9 @@ def _main(argv: list[str] | None = None) -> None:
                    help="0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買")
     p.add_argument("--cooldown", type=int, default=5)
     p.add_argument("--init-frac", type=float, default=0.0, help="第一天先投入的比例")
+    p.add_argument("--exit-mode", type=int, default=0, choices=[0, 1, 2],
+                   help="0 只買不賣 / 1 回到前高全部賣出 / 2 部位獲利達 --tp-pct 全部賣出")
+    p.add_argument("--tp-pct", type=float, default=0.10)
     p.add_argument("--cash-rate", default="0",
                    help="閒置現金年利率，例如 0.04；auto = 用 13 週國庫券(^IRX)每日實際利率")
     p.add_argument("--fee-bps", type=float, default=10.0)
@@ -148,6 +151,9 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--mode", type=int, default=0, choices=[0, 1, 2])
     p.add_argument("--cooldown", type=int, default=5)
     p.add_argument("--init-frac", type=float, default=0.0)
+    p.add_argument("--exit-mode", type=int, default=0, choices=[0, 1, 2],
+                   help="0 只買不賣 / 1 回到前高全部賣出 / 2 部位獲利達 --tp-pct 全部賣出")
+    p.add_argument("--tp-pct", type=float, default=0.10)
     p.add_argument("--cash-rate", default="auto",
                    help="auto（預設）= ^IRX 國庫券每日實際利率；或固定值如 0.04")
     p.add_argument("--fee-bps", type=float, default=10.0)
@@ -168,6 +174,8 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--window-days", type=int, default=252)
     p.add_argument("--step-days", type=int, default=21)
     p.add_argument("--sma-days", type=int, default=200, help="均線濾網天數（預設 200）")
+    p.add_argument("--short-fee", type=float, default=0.0095,
+                   help="做空年費用（以反向 ETF 計，預設 0.95%%）；空單另賺國庫券利率")
     p.add_argument("--cash-rate", default="auto")
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results")
@@ -294,7 +302,7 @@ def _main(argv: list[str] | None = None) -> None:
             rows = [["買進持有（100%）", _pct(bh.total_return), _pct(bh.max_drawdown),
                      f"{bh.sharpe:.2f}", "1", "100%", "100%", "—", "—"]]
             for c in dip_configs(args.triggers, args.buy_fracs, args.mode,
-                                 args.cooldown, args.init_frac):
+                                 args.cooldown, args.init_frac, args.exit_mode, args.tp_pct):
                 params = {k: v for k, v in c.items() if k != "label"}
                 res = run_signals(df, make("dip", **params), fee_bps=args.fee_bps,
                                   cash_rate=cash)
@@ -344,7 +352,7 @@ def _main(argv: list[str] | None = None) -> None:
             cash = np.full(len(dates), cash)
         win, summ = strategy_lab(prices, cash, first_start, window=args.window_days,
                                  step=args.step_days, fee_bps=args.fee_bps,
-                                 sma_days=args.sma_days)
+                                 sma_days=args.sma_days, short_fee=args.short_fee)
         base = f"{args.tickers[0]} 買進持有"
         print(f"\n=== 策略實驗室：{'、'.join(args.tickers)}，起點 {win['start'].iloc[0]} ~ "
               f"{win['start'].iloc[-1]}，共 {win['start'].nunique()} 段一年期區間 ===")
@@ -354,11 +362,11 @@ def _main(argv: list[str] | None = None) -> None:
                  _pct(r["worst"]), _pct(r["worst_mdd"]),
                  "—" if r["strategy"] == base else _pct(r["beat_base"], 0),
                  _pct(r["full_cagr"]), _pct(r["full_mdd"])]
-                for _, r in summ.sort_values("median", ascending=False).iterrows()]
+                for _, r in summ.sort_values("full_cagr", ascending=False).iterrows()]
         _table(["策略", "一年平均", "一年中位", "最差10%", "最差一年", "年內最差回撤",
                 f"勝{base}", "全期年化", "全期最大回撤"], rows)
 
-        print("\n依你能承受的「任一年內最大回撤」挑選（以一年中位數報酬最高者為準）：")
+        print("\n依你能承受的「全期最大回撤」挑選（以全期年化報酬最高者為準）：")
         picks = []
         for p in pick_by_risk(summ):
             label = "不限" if p["budget"] is None else f"不超過 -{p['budget']:.0%}"
@@ -366,9 +374,9 @@ def _main(argv: list[str] | None = None) -> None:
             if r is None:
                 picks.append([label, "（沒有符合的策略）", "", "", "", ""])
             else:
-                picks.append([label, r["strategy"], _pct(r["median"]), _pct(r["worst"]),
-                              _pct(r["worst_mdd"]), _pct(r["full_cagr"])])
-        _table(["可承受回撤", "最佳策略", "一年中位", "最差一年", "年內最差回撤", "全期年化"],
+                picks.append([label, r["strategy"], _pct(r["full_cagr"]), _pct(r["full_mdd"]),
+                              _pct(r["median"]), _pct(r["worst"])])
+        _table(["可承受回撤", "最佳策略", "全期年化", "全期最大回撤", "一年中位", "最差一年"],
                picks)
 
         os.makedirs(args.out_dir, exist_ok=True)
@@ -379,14 +387,16 @@ def _main(argv: list[str] | None = None) -> None:
                     encoding="utf-8-sig")
         print(f"\n明細已存到 {args.out_dir}{os.sep}best_{tag}_*.csv")
         print("說明：固定比例為每日再平衡、不計再平衡成本；均線濾網＝收盤在均線之上隔日持有，"
-              "否則轉國庫券（含交易成本）；逢跌加碼每段從全現金開始。"
-              "\n「全期」＝從第一個起點一路持有到最後；逢跌加碼是一年期策略，沒有全期數字。"
+              "否則轉國庫券；均線多空＝跌破均線改做空（以反向 ETF 計：賺國庫券利率、"
+              f"扣 {args.short_fee:.2%} 年費）；均線策略皆含交易成本。"
+              "\n逢跌加碼：一年期欄位每段從全現金開始；全期欄位從第一個起點以全現金開始一路執行。"
+              "\n「全期」＝從第一個起點一路執行到最後，最貼近長期實際執行的報酬與最大跌幅。"
               "\n挑選結果是對過去資料的最佳，不保證未來；相鄰區間高度重疊，看大方向勝過看小數點。")
 
     elif args.cmd == "rolling":
         from .research import by_start_year, dip_configs, rolling_dip, summarize
         configs = dip_configs(args.triggers, args.buy_fracs, args.mode,
-                              args.cooldown, args.init_frac)
+                              args.cooldown, args.init_frac, args.exit_mode, args.tp_pct)
         focus = configs[0]["label"]
         os.makedirs(args.out_dir, exist_ok=True)
         for t in args.tickers:

@@ -317,16 +317,18 @@ class TSMomentum(Strategy):
 
 
 class DipBuy(Strategy):
-    """逢跌加碼：從高點回撤達 dd_trigger 就投入 buy_frac 的初始資金，只買不賣（mode 0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買一次）。
+    """逢跌加碼：從高點回撤達 dd_trigger 就投入 buy_frac 的初始資金（mode 0 每跌一階買一次 / 1 從上次買價再跌一階 / 2 回撤中每 cooldown 天買一次）；exit_mode 0 只買不賣 / 1 回到前高全部賣出 / 2 部位獲利達 tp_pct 全部賣出。
 
     與訊號策略不同，這是以「現金 + 股數」逐筆累積的模擬：
     - 初始資金 1.0，init_frac 為第一天就先投入的比例，其餘為現金
     - 高點 = 回測期間至今的最高收盤價；創新高時重置加碼階梯
     - 每次加碼金額 = buy_frac × 初始資金（現金不足時用剩下的全部）
-    - 於觸發當日收盤成交（等同收盤前下單），只收買進成本
+    - 於觸發當日收盤成交（等同收盤前下單），買賣都收交易成本
     - mode 0：回撤每跨過一個 dd_trigger 的整數倍買一次（-3%、-6%、-9%…）
       mode 1：價格比「上次買價」（或高點）再跌 dd_trigger 才買
       mode 2：只要回撤 ≥ dd_trigger，每隔 cooldown 個交易日買一次
+    - exit_mode 1：收盤回到（或超過）前高時賣出全部持股，回到全現金等下一次下跌
+      exit_mode 2：收盤價 ≥ 平均成本 × (1 + tp_pct) 時賣出全部持股
     """
     NAME = "dip"
     HAS_RISK = False
@@ -336,12 +338,14 @@ class DipBuy(Strategy):
         "mode": (0, 2, "int"),
         "cooldown": (1, 20, "int"),
         "init_frac": (0.0, 1.0, "float"),
+        "exit_mode": (0, 2, "int"),
+        "tp_pct": (0.02, 0.50, "float"),
     }
 
     @classmethod
     def default_params(cls):
         return {"dd_trigger": 0.03, "buy_frac": 0.05, "mode": 0,
-                "cooldown": 5, "init_frac": 0.0}
+                "cooldown": 5, "init_frac": 0.0, "exit_mode": 0, "tp_pct": 0.10}
 
     def simulate(self, df: pd.DataFrame, fee_bps: float = 10.0,
                  slippage_bps: float = 0.0, cash_rate: float = 0.0) -> dict:
@@ -350,6 +354,8 @@ class DipBuy(Strategy):
         lot = max(0.0, float(p["buy_frac"]))
         mode = int(p["mode"])
         cooldown = max(1, int(p["cooldown"]))
+        exit_mode = int(p.get("exit_mode", 0))
+        tp = float(p.get("tp_pct", 0.10))
         cost = (fee_bps + slippage_bps) / 10_000.0
 
         close = df["close"].to_numpy(dtype=float)
@@ -357,17 +363,33 @@ class DipBuy(Strategy):
         n = len(close)
         # cash_rate 可為固定年利率，或與 df 等長的每日年利率序列
         daily_cash = np.broadcast_to(np.asarray(cash_rate, dtype=float) / 252.0, (n,))
-        cash, shares = 1.0, 0.0
-        lots: list[tuple[int, float, float]] = []   # (日索引, 投入金額, 回撤)
+        cash, shares, basis = 1.0, 0.0, 0.0
+        open_lots: list[tuple[int, float, float]] = []   # (日索引, 投入金額, 回撤)
+        trades_log: list[dict] = []
 
         def buy(i: int, amount: float, dd: float) -> None:
-            nonlocal cash, shares
+            nonlocal cash, shares, basis
             amount = min(amount, cash)
             if amount <= 1e-9:
                 return
-            shares += amount * (1.0 - cost) / close[i]
+            net = amount * (1.0 - cost)
+            shares += net / close[i]
+            basis += net
             cash -= amount
-            lots.append((i, amount, dd))
+            open_lots.append((i, amount, dd))
+
+        def sell_all(i: int, reason: str) -> None:
+            nonlocal cash, shares, basis
+            cash += shares * close[i] * (1.0 - cost)
+            for j, amt, dd in open_lots:
+                trades_log.append({
+                    "entry": dates[j], "exit": dates[i],
+                    "side": f"加碼 {amt:.1%}（回撤 {dd:.1%}）→ {reason}",
+                    "days": i - j,
+                    "ret": round(float(close[i] / close[j] * (1.0 - cost) ** 2 - 1.0), 4),
+                })
+            open_lots.clear()
+            shares, basis = 0.0, 0.0
 
         peak = close[0] if n else 0.0
         rung = 0
@@ -381,6 +403,11 @@ class DipBuy(Strategy):
                 cash *= 1.0 + daily_cash[i]
             if i == 0 and float(p["init_frac"]) > 0:
                 buy(0, float(p["init_frac"]), 0.0)
+            if shares > 0 and i > 0:
+                if exit_mode == 1 and c >= peak:
+                    sell_all(i, "回到前高賣出")
+                elif exit_mode == 2 and c >= basis / shares * (1.0 + tp):
+                    sell_all(i, f"獲利 {tp:.0%} 賣出")
             if c >= peak:
                 peak, rung, ref_price = c, 0, None
             dd = 1.0 - c / peak
@@ -403,13 +430,13 @@ class DipBuy(Strategy):
             exposure.append(shares * c / eq if eq > 0 else 0.0)
 
         last = n - 1
-        trades_log = [{
+        trades_log += [{
             "entry": dates[i], "exit": dates[last],
             "side": f"加碼 {amt:.1%}（回撤 {dd:.1%}）",
             "days": last - i,
             "ret": round(float(close[last] / close[i] * (1.0 - cost) - 1.0), 4),
             "open": True,
-        } for i, amt, dd in lots]
+        } for i, amt, dd in open_lots]
         return {"equity": equity, "exposure": exposure, "trades_log": trades_log,
                 "cash_left": cash}
 

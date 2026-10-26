@@ -19,10 +19,16 @@ def pct_label(x: float) -> str:
     return f"{x * 100:g}%"
 
 
+EXIT_LABELS = {0: "", 1: " + 回前高賣出"}
+
+
 def dip_configs(triggers, buy_fracs, mode: int = 0, cooldown: int = 5,
-                init_frac: float = 0.0) -> list[dict]:
-    return [{"label": f"跌{pct_label(t)}買{pct_label(f)}", "dd_trigger": t,
-             "buy_frac": f, "mode": mode, "cooldown": cooldown, "init_frac": init_frac}
+                init_frac: float = 0.0, exit_mode: int = 0,
+                tp_pct: float = 0.10) -> list[dict]:
+    suffix = EXIT_LABELS.get(exit_mode, f" + 賺{pct_label(tp_pct)}賣出")
+    return [{"label": f"跌{pct_label(t)}買{pct_label(f)}{suffix}", "dd_trigger": t,
+             "buy_frac": f, "mode": mode, "cooldown": cooldown, "init_frac": init_frac,
+             "exit_mode": exit_mode, "tp_pct": tp_pct}
             for f in buy_fracs for t in triggers]
 
 
@@ -117,8 +123,9 @@ STATIC_LEVELS = {0: (0.3, 0.5, 0.7), 1: (0.5,)}   # 第一檔標的 / 其他標�
 
 
 def _continuous_candidates(prices: dict[str, pd.DataFrame], cash: np.ndarray,
-                           fee_bps: float, sma_days: int) -> dict[str, np.ndarray]:
-    """在完整歷史上算出每日報酬的「持續型」策略：買進持有、固定比例、均線濾網。"""
+                           fee_bps: float, sma_days: int,
+                           short_fee: float) -> dict[str, np.ndarray]:
+    """在完整歷史上算出每日報酬的「持續型」策略：買進持有、固定比例、均線濾網、均線多空。"""
     out: dict[str, np.ndarray] = {}
     daily_cash = cash / 252.0
     for k, (t, df) in enumerate(prices.items()):
@@ -129,6 +136,9 @@ def _continuous_candidates(prices: dict[str, pd.DataFrame], cash: np.ndarray,
         trend = run_signals(df, make("sma", fast=1, slow=sma_days), fee_bps=fee_bps,
                             cash_rate=cash)
         out[f"{t} {sma_days}日均線濾網"] = trend.returns.to_numpy()
+        ls = run_signals(df, make("sma", fast=1, slow=sma_days, short=1), fee_bps=fee_bps,
+                         cash_rate=cash, short_fee=short_fee)
+        out[f"{t} {sma_days}日均線多空"] = ls.returns.to_numpy()
     return out
 
 
@@ -138,9 +148,16 @@ def _window_stats(r: np.ndarray, s: int, window: int) -> tuple[float, float]:
     return float(eq[-1] - 1.0), float((eq / np.maximum.accumulate(eq) - 1.0).min())
 
 
+def _dip_lab_configs() -> list[dict]:
+    return (dip_configs([0.03], [0.05, 0.10])
+            + dip_configs([0.03], [0.10], exit_mode=1)
+            + dip_configs([0.03], [0.10], exit_mode=2, tp_pct=0.10))
+
+
 def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start: int,
                  window: int = 252, step: int = 21, fee_bps: float = 10.0,
-                 sma_days: int = 200) -> tuple[pd.DataFrame, pd.DataFrame]:
+                 sma_days: int = 200,
+                 short_fee: float = 0.0095) -> tuple[pd.DataFrame, pd.DataFrame]:
     """比較多種候選策略在相同一年期滾動區間的表現。
 
     prices 需已對齊日期（data.align_universe），cash 為對齊的每日年利率。
@@ -153,8 +170,8 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
     if not starts:
         raise ValueError("資料不足，無法產生任何滾動區間（均線需要 "
                          f"{sma_days} 天暖機，每段 {window} 天）")
-    cont = _continuous_candidates(prices, cash, fee_bps, sma_days)
-    dip_cfgs = dip_configs([0.03], [0.05, 0.10])
+    cont = _continuous_candidates(prices, cash, fee_bps, sma_days, short_fee)
+    dip_cfgs = _dip_lab_configs()
 
     recs = []
     for s in starts:
@@ -172,16 +189,24 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
                              "ret": res.total_return, "mdd": res.max_drawdown})
     win = pd.DataFrame(recs)
 
+    full: dict[str, tuple[float, float]] = {}
+    for name, r in cont.items():
+        eq = np.cumprod(1.0 + r[first_start + 1:])
+        full[name] = (float(eq[-1] ** (252 / len(eq)) - 1.0),
+                      float((eq / np.maximum.accumulate(eq) - 1.0).min()))
+    for t in tickers:
+        sub = prices[t].iloc[first_start:].reset_index(drop=True)
+        for c in dip_cfgs:
+            params = {k: v for k, v in c.items() if k != "label"}
+            res = run_signals(sub, make("dip", **params), fee_bps=fee_bps,
+                              cash_rate=cash[first_start:])
+            full[f"{t} 逢跌加碼 {c['label']}"] = (res.cagr, res.max_drawdown)
+
     base = win[win["strategy"] == f"{tickers[0]} 買進持有"].set_index("start")["ret"]
     rows = []
     for name, g in win.groupby("strategy", sort=False):
         g = g.set_index("start")
-        full_cagr = full_mdd = np.nan
-        if name in cont:
-            seg = cont[name][first_start + 1:]
-            eq = np.cumprod(1.0 + seg)
-            full_cagr = float(eq[-1] ** (252 / len(seg)) - 1.0)
-            full_mdd = float((eq / np.maximum.accumulate(eq) - 1.0).min())
+        full_cagr, full_mdd = full.get(name, (np.nan, np.nan))
         rows.append({"strategy": name, "mean": g["ret"].mean(), "median": g["ret"].median(),
                      "p10": g["ret"].quantile(0.10), "worst": g["ret"].min(),
                      "worst_mdd": g["mdd"].min(),
@@ -191,15 +216,16 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
 
 
 def pick_by_risk(summary: pd.DataFrame, budgets=(0.20, 0.35, 0.50, None)) -> list[dict]:
-    """依「任一年內最大回撤」上限，挑出一年中位數報酬最高的策略。"""
+    """依「全期最大回撤」上限，挑出全期年化報酬最高的策略。"""
     picks = []
     for b in budgets:
         # 以畫面顯示的精度（0.01%）比較，避免 -20.00% 因浮點誤差被判為超過 -20%
-        ok = summary if b is None else summary[summary["worst_mdd"].round(4) >= -b]
+        ok = summary if b is None else summary[summary["full_mdd"].round(4) >= -b]
+        ok = ok.dropna(subset=["full_cagr"])
         if ok.empty:
             picks.append({"budget": b, "row": None})
             continue
-        picks.append({"budget": b, "row": ok.sort_values(["median", "mean"]).iloc[-1]})
+        picks.append({"budget": b, "row": ok.sort_values(["full_cagr", "median"]).iloc[-1]})
     return picks
 
 
