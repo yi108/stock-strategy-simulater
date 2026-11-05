@@ -537,7 +537,8 @@ def bottom_fishing_study(df: pd.DataFrame, cash: np.ndarray, events: list[int],
     """從每個事件日開始，比較各種「用現金抄底」方式在 horizon 天後的結果。
 
     除了「跟著 120 日動量進出」外，其他方式都是買進後一路持有（只決定什麼時候、分幾次進場）；
-    還沒投入的現金按國庫券利率計息。每列為（事件 × 方式）。
+    還沒投入的現金按國庫券利率計息。「混合」為兩個獨立部位（立刻買抱著＋動量進出）、
+    中途不再平衡。每列為（事件 × 方式）。
     """
     close = df["close"].astype(float).reset_index(drop=True)
     peak = close.rolling(252, min_periods=1).max().to_numpy()
@@ -576,19 +577,28 @@ def bottom_fishing_study(df: pd.DataFrame, cash: np.ndarray, events: list[int],
         plans["全部留在國庫券"] = {}
 
         further = float(p.min() / p0 - 1.0)
-        for name, plan in plans.items():
-            eq, expo = _deploy_path(p, rf, plan, fee)
+
+        def add(name: str, eq: np.ndarray, expo: float) -> None:
             rows.append({"event": str(df["date"].iloc[t0]), "dd_at_event": 1 - p0 / pk,
                          "further_drop": further, "strategy": name,
                          "ret": float(eq[-1] - 1.0),
                          "mdd": float((eq / np.maximum.accumulate(eq) - 1.0).min()),
                          "end_expo": expo})
-        eq = np.concatenate([[1.0], np.cumprod(1.0 + inout[t0 + 1:t0 + horizon])])
-        rows.append({"event": str(df["date"].iloc[t0]), "dd_at_event": 1 - p0 / pk,
-                     "further_drop": further, "strategy": "跟著 120 日動量進出（現行策略）",
-                     "ret": float(eq[-1] - 1.0),
-                     "mdd": float((eq / np.maximum.accumulate(eq) - 1.0).min()),
-                     "end_expo": float(mom_up[t0 + horizon - 1])})
+
+        paths = {}
+        for name, plan in plans.items():
+            eq, expo = _deploy_path(p, rf, plan, fee)
+            paths[name] = (eq, expo)
+            add(name, eq, expo)
+        eq_io = np.concatenate([[1.0], np.cumprod(1.0 + inout[t0 + 1:t0 + horizon])])
+        io_expo = float(mom_up[t0 + horizon - 1])
+        add("跟著 120 日動量進出（現行策略）", eq_io, io_expo)
+        # 兩個獨立部位、中途不再平衡：淨值 = 權重加權的兩條淨值路徑
+        eq_lump, _ = paths["立刻全部買進"]
+        for w in (0.25, 0.5, 0.75):
+            eq = w * eq_lump + (1 - w) * eq_io
+            expo = float((w * eq_lump[-1] + (1 - w) * eq_io[-1] * io_expo) / eq[-1])
+            add(f"混合：{w:.0%} 立刻買抱著 + {1 - w:.0%} 動量進出", eq, expo)
     return pd.DataFrame(rows)
 
 
