@@ -408,7 +408,9 @@ def _main(argv: list[str] | None = None) -> None:
             header += [f"{n} 金額" for n in names] + ["國庫券金額"]
         _table(header, rows)
         fallback = args.alt or "國庫券"
-        print(f"\n規則：每個交易日收盤後檢查；收盤價在均線之上 → 持有到下一次檢查；跌破 → 換成{fallback}。"
+        cond = (f"收盤價高於 {args.lookback} 個交易日前的收盤價" if args.rule == "mom"
+                else f"收盤價在 {args.sma_days} 日均線之上")
+        print(f"\n規則：每個交易日收盤後檢查；{cond} → 持有到下一次檢查；否則 → 換成{fallback}。"
               "\n回測的成交方式是「看收盤訊號、以收盤價換手」，實務上可在收盤前幾分鐘用接近收盤的價格判斷並下單。"
               "\n這是依回測規則計算的訊號，不是投資建議；下單前請自行確認。")
         if args.alt:
