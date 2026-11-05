@@ -159,6 +159,15 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results", help="每段明細 CSV 的輸出目錄")
 
+    p = sub.add_parser("signal", help="今日訊號：200 日均線濾網該持有還是轉國庫券、資金怎麼配")
+    p.add_argument("-t", "--tickers", nargs="+", default=["QLD", "QQQ"],
+                   help="第一檔為實際操作的標的（預設 QLD），其餘僅供參考")
+    p.add_argument("--sma-days", type=int, default=200)
+    p.add_argument("--weights", nargs="+", type=float, default=[0.45, 0.78, 1.0],
+                   help="策略部位佔總資金的比例（其餘放國庫券），預設對應約 -20/-35/-45%% 回撤")
+    p.add_argument("--capital", type=float, default=None, help="總資金（選填，會換算成金額）")
+    p.add_argument("--no-refresh", action="store_true", help="不重新下載，直接用 data/ 裡的資料")
+
     p = sub.add_parser("synth", help="用標的每日報酬合成槓桿 ETF，補足上市前的歷史")
     p.add_argument("-t", "--base", default="QQQ", help="標的（預設 QQQ）")
     p.add_argument("--leverage", type=float, default=2.0)
@@ -316,6 +325,50 @@ def _main(argv: list[str] | None = None) -> None:
                     "固定配置報酬", "差距(百分點)"], rows)
         print("\n固定配置 = 每天維持與該設定「平均持股」相同的比例在標的、其餘放現金，"
               "不挑時機；差距為正代表逢跌買進的時機有加分。")
+
+    elif args.cmd == "signal":
+        from .research import trend_signal
+        now_ny = pd.Timestamp.now(tz="America/New_York")
+        sigs = {}
+        for t in args.tickers:
+            df = load(t) if args.no_refresh else data.refresh(t, args.data_dir)
+            s = trend_signal(df, args.sma_days)
+            sigs[t] = s
+            intraday = (s["date"] == now_ny.strftime("%Y-%m-%d") and now_ny.weekday() < 5
+                        and (now_ny.hour, now_ny.minute) < (16, 0))
+            when = "盤中最新價（尚未收盤，收盤前訊號可能改變）" if intraday else "收盤"
+            print(f"\n=== {t}  {args.sma_days} 日均線濾網（{s['date']} {when}）===")
+            _table(["項目", "數值"], [
+                ["收盤價", f"{s['close']:.2f}"],
+                [f"{args.sma_days} 日均線", f"{s['sma']:.2f}"],
+                ["距離均線", f"{s['gap']:+.2%}"],
+                ["訊號", f"持有 {t}（站上均線）" if s["above"] else "轉國庫券（跌破均線）"],
+                ["這個狀態已持續", f"{s['days_in_state']} 個交易日"
+                                  + ("（今天剛翻轉！）" if s["switched"] else "")],
+                ["下一個交易日的臨界收盤價", f"{s['threshold']:.2f}（距今 {s['threshold_gap']:+.2%}）"],
+            ])
+            if s["above"]:
+                print(f"→ 下一個交易日收盤若低於 {s['threshold']:.2f}，訊號會翻轉為「轉國庫券」。")
+            else:
+                print(f"→ 下一個交易日收盤若高於 {s['threshold']:.2f}，訊號會翻轉為「持有 {t}」。")
+
+        t0 = args.tickers[0]
+        s0 = sigs[t0]
+        print(f"\n=== 資金配置（依 {t0} 的訊號）===")
+        rows = []
+        for w in args.weights:
+            hold = w if s0["above"] else 0.0
+            row = [f"策略部位 {w:.0%}", _pct(hold, 0), _pct(1 - hold, 0)]
+            if args.capital:
+                row += [f"{args.capital * hold:,.0f}", f"{args.capital * (1 - hold):,.0f}"]
+            rows.append(row)
+        header = ["你的設定", t0, "國庫券／貨幣基金"]
+        if args.capital:
+            header += [f"{t0} 金額", "國庫券金額"]
+        _table(header, rows)
+        print("\n規則：每個交易日收盤後檢查；收盤價在均線之上 → 持有到下一次檢查；跌破 → 換成國庫券。"
+              "\n回測的成交方式是「看收盤訊號、以收盤價換手」，實務上可在收盤前幾分鐘用接近收盤的價格判斷並下單。"
+              "\n這是依回測規則計算的訊號，不是投資建議；下單前請自行確認。")
 
     elif args.cmd == "synth":
         from .research import compare_series, synth_leveraged

@@ -155,6 +155,24 @@ def load_or_fetch(ticker: str, data_dir: str = "data", period: str = "1y",
     return load_csv(path)
 
 
+def refresh(ticker: str, data_dir: str = "data", period: str = "2y", log=print) -> pd.DataFrame:
+    """重新下載最近一段期間（預設 2 年）並合併進 data_dir/<ticker>.csv，回傳新下載的部分。
+
+    回傳值只含這次下載的資料，確保還原權值（除息調整）前後一致，適合計算當日訊號。
+    """
+    path = os.path.join(data_dir, f"{ticker}.csv")
+    new = fetch(ticker, period=period)
+    if os.path.exists(path):
+        old = load_csv(path)
+        old = old[old["date"] < new["date"].iloc[0]]
+        merged = _normalize(pd.concat([old, new], ignore_index=True))
+    else:
+        merged = new
+    save_csv(merged, path)
+    log(f"已更新 {path}，最新資料 {new['date'].iloc[-1]}")
+    return new
+
+
 YF_PERIODS = {1, 2, 5, 10}
 
 

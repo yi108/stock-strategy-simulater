@@ -83,6 +83,36 @@ def summarize(win: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ---------------------------------------------------------------- 今日訊號
+
+def trend_signal(df: pd.DataFrame, sma_days: int = 200) -> dict:
+    """均線濾網在最新一根日K的訊號（與回測的 sma(fast=1, slow=sma_days) 規則相同）。
+
+    回傳收盤、均線、距離、訊號、是否剛翻轉、目前狀態已持續幾天，以及
+    「下一個交易日收盤要站上（或守住）均線的臨界價」：
+    明天的均線 = (最近 sma_days-1 天收盤合計 + 明天收盤) / sma_days，
+    明天收盤 > 明天均線 ⇔ 明天收盤 > 最近 sma_days-1 天收盤的平均。
+    """
+    close = df["close"].astype(float).reset_index(drop=True)
+    if len(close) < sma_days + 1:
+        raise ValueError(f"資料只有 {len(close)} 天，不夠計算 {sma_days} 日均線訊號")
+    sma = close.rolling(sma_days).mean()
+    above = (close > sma) & sma.notna()
+    last = len(close) - 1
+    state = bool(above.iloc[last])
+    run = 0
+    for v in above.iloc[::-1]:
+        if bool(v) != state:
+            break
+        run += 1
+    threshold = float(close.iloc[-(sma_days - 1):].mean())
+    c = float(close.iloc[last])
+    return {"date": str(df["date"].iloc[-1]), "close": c, "sma": float(sma.iloc[last]),
+            "gap": c / float(sma.iloc[last]) - 1.0, "above": state,
+            "switched": state != bool(above.iloc[last - 1]), "days_in_state": run,
+            "threshold": threshold, "threshold_gap": threshold / c - 1.0}
+
+
 # ---------------------------------------------------------------- 合成槓桿 ETF
 
 def synth_leveraged(base: pd.DataFrame, cash: np.ndarray, leverage: float = 2.0,
