@@ -193,6 +193,21 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results")
 
+    p = sub.add_parser("tournament", help="策略錦標賽：所有策略滾動最佳化，比樣本外績效")
+    p.add_argument("-t", "--ticker", default="QQQ")
+    p.add_argument("--years", type=int, default=26, help="使用最近幾年的資料（預設 26）")
+    p.add_argument("--train-years", type=int, default=3, help="每次最佳化只看過去幾年（預設 3）")
+    p.add_argument("--test-days", type=int, default=252, help="每組參數使用多久再重新最佳化（預設 252 ≈ 一年）")
+    p.add_argument("--steps", type=int, default=120, help="每次最佳化的退火步數")
+    p.add_argument("--objective", default="sharpe", choices=["sharpe", "calmar", "cagr"],
+                   help="最佳化目標：sharpe（扣國庫券）、calmar、cagr")
+    p.add_argument("--strategies", nargs="*", default=None, help="只比部分策略（預設全部）")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--short-fee", type=float, default=0.0095)
+    p.add_argument("--cash-rate", default="auto")
+    p.add_argument("--fee-bps", type=float, default=10.0)
+    p.add_argument("--out-dir", default="results")
+
     p = sub.add_parser("rotation", help="動量輪動：每期買過去表現最強的 N 檔")
     p.add_argument("-t", "--tickers", nargs="*", default=None, help="預設用 data 目錄全部")
     p.add_argument("--lookback", type=int, default=126)
@@ -486,6 +501,68 @@ def _main(argv: list[str] | None = None) -> None:
               "\n逢跌加碼：一年期欄位每段從全現金開始；全期欄位從第一個起點以全現金開始一路執行。"
               "\n「全期」＝從第一個起點一路執行到最後，最貼近長期實際執行的報酬與最大跌幅。"
               "\n挑選結果是對過去資料的最佳，不保證未來；相鄰區間高度重疊，看大方向勝過看小數點。")
+
+    elif args.cmd == "tournament":
+        from .research import pick_by_risk, strategy_tournament
+        t = args.ticker
+        df = data.load_history(t, args.data_dir, years=args.years)
+        cut = pd.Timestamp.today().normalize() - pd.DateOffset(years=args.years)
+        df = df[pd.to_datetime(df["date"]) >= cut].reset_index(drop=True)
+        cash = cash_for(df, years=args.years)
+        if isinstance(cash, float):
+            cash = np.full(len(df), cash)
+        first_test = args.train_years * 252
+        if first_test >= len(df) - args.test_days:
+            raise data.DataError(f"{t} 只有 {len(df)} 天資料，不夠先訓練 {args.train_years} 年再測試")
+        print(f"=== {t} 策略錦標賽：資料 {df['date'].iloc[0]} ~ {df['date'].iloc[-1]}；"
+              f"樣本外期間 {df['date'].iloc[first_test]} 起 ===")
+        print(f"每 {args.test_days} 個交易日重新最佳化一次，只用過去 {args.train_years} 年資料、"
+              f"目標 {args.objective}、每次 {args.steps} 步退火。")
+
+        def progress(i, total, name):
+            print(f"  [{i + 1}/{total}] 最佳化 {name} …", flush=True)
+
+        summ, latest = strategy_tournament(
+            df, cash, first_test, names=args.strategies, test_days=args.test_days,
+            train_days=args.train_years * 252, steps=args.steps, seed=args.seed,
+            fee_bps=args.fee_bps, short_fee=args.short_fee, objective=args.objective,
+            on_progress=progress)
+
+        print("\n樣本外績效（依 Sharpe 由高到低；Sharpe 已扣國庫券）：")
+        rows = [[r["strategy"], _pct(r["full_cagr"]), _pct(r["full_mdd"]), _pct(r["premium"]),
+                 f"{r['sharpe']:.2f}", f"{r['calmar']:.2f}", _pct(r["median"]),
+                 _pct(r["worst"]), _pct(r["beat_bh"], 0)]
+                for _, r in summ.sort_values("sharpe", ascending=False).iterrows()]
+        _table(["策略", "年化", "最大回撤", "超額年化", "Sharpe", "Calmar", "每段中位",
+                "最差一段", "勝買進持有"], rows)
+
+        opt = summ[summ["version"] == "滾動最佳化"].set_index("family")
+        dft = summ[summ["version"] == "預設參數"].set_index("family")
+        helped = int((opt["sharpe"] > dft["sharpe"]).sum())
+        print(f"\n最佳化有沒有幫助：{len(opt)} 個策略中，滾動最佳化版的 Sharpe 高於預設參數版的有 {helped} 個。")
+
+        print("\n依你能承受的最大回撤挑選（全期與每段內回撤都不超過門檻；以全期年化最高者為準）：")
+        picks = []
+        for p in pick_by_risk(summ):
+            label = "不限" if p["budget"] is None else f"不超過 -{p['budget']:.0%}"
+            r = p["row"]
+            picks.append([label, "（沒有符合的策略）", "", "", ""] if r is None else
+                         [label, r["strategy"], _pct(r["full_cagr"]), _pct(r["full_mdd"]),
+                          f"{r['sharpe']:.2f}"])
+        _table(["可承受回撤", "最佳策略", "年化", "最大回撤", "Sharpe"], picks)
+
+        print("\n各策略最近一次最佳化的參數（若要照該策略執行，用的是這組）：")
+        for name, info in latest.items():
+            print(f"  {name}（{info['start']} 起）：{info['params']}")
+
+        os.makedirs(args.out_dir, exist_ok=True)
+        out = os.path.join(args.out_dir, f"tournament_{t}.csv")
+        summ.to_csv(out, index=False, encoding="utf-8-sig")
+        print(f"\n統計表已存到 {out}")
+        print("說明：所有數字都是樣本外——每段的參數只用該段之前的資料決定。"
+              "「預設參數」是不做任何最佳化、直接用預設值的版本；"
+              "「滾動最佳化」可調整策略參數、停損停利與是否做空（做空以反向 ETF 計）。"
+              "\n最後挑出的第一名仍是在同一段歷史上比較出來的，排名接近的策略不要過度解讀。")
 
     elif args.cmd == "rolling":
         from .research import by_start_year, dip_configs, rolling_dip, summarize

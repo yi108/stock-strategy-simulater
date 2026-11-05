@@ -320,3 +320,118 @@ def by_start_year(win: pd.DataFrame, label: str) -> pd.DataFrame:
         mix=("mix_ret", "median"),
         beat_bh=("dip_ret", lambda s: (s > g.loc[s.index, "bh_ret"]).mean()))
     return out.reset_index()
+
+
+# ---------------------------------------------------------------- 策略錦標賽（滾動最佳化）
+
+def _score(r: np.ndarray, rf_annual: np.ndarray, objective: str) -> float:
+    m = full_metrics(r, rf_annual)
+    v = {"sharpe": m["sharpe"], "calmar": m["calmar"], "cagr": m["full_cagr"]}[objective]
+    return v if np.isfinite(v) else -1e9
+
+
+def walk_forward_strategy(df: pd.DataFrame, cash: np.ndarray, name: str, first_test: int,
+                          test_days: int = 252, train_days: int = 756, warm: int = 400,
+                          steps: int = 120, seed: int = 42, fee_bps: float = 10.0,
+                          short_fee: float = 0.0095, objective: str = "sharpe"
+                          ) -> tuple[np.ndarray, list[dict]]:
+    """單一策略的滾動最佳化：每段只用「前 train_days 天」退火找參數，套用到接下來 test_days 天。
+
+    參數空間含策略自身參數與共通的停損停利、做空開關（full_space）。
+    每段以上一段的最佳參數為起點再退火；訓練與測試前都多給 warm 天讓指標暖機。
+    回傳 (第 first_test 天起的樣本外每日報酬, 每段使用的參數)。
+    """
+    from .annealing import _perturb_param, anneal
+    from .strategies import STRATEGIES
+
+    cls = STRATEGIES[name]
+    space = cls.full_space()
+    n = len(df)
+    oos = np.zeros(n)
+    plog: list[dict] = []
+    state = cls.full_defaults()
+
+    def run(sub: pd.DataFrame, params: dict, c: np.ndarray) -> np.ndarray:
+        return run_signals(sub, make(name, **params), fee_bps=fee_bps, cash_rate=c,
+                           short_fee=short_fee).returns.to_numpy()
+
+    for s in range(first_test, n, test_days):
+        e = min(s + test_days, n)
+        if space:
+            lo = max(0, s - train_days)
+            wlo = max(0, lo - warm)
+            tr_df = df.iloc[wlo:s].reset_index(drop=True)
+            tr_cash = cash[wlo:s]
+            skip = lo - wlo + 1
+
+            def score(st: dict) -> float:
+                return _score(run(tr_df, st, tr_cash)[skip:], tr_cash[skip:], objective)
+
+            def neighbor(st: dict, scale: float, rng) -> dict:
+                nxt = dict(st)
+                key = rng.choice(list(space))
+                plo, phi, kind = space[key]
+                nxt[key] = _perturb_param(st[key], plo, phi, kind, scale, rng)
+                return nxt
+
+            state = anneal(state, neighbor, score, steps=steps, seed=seed + s).best_state
+        tlo = max(0, s - warm)
+        r = run(df.iloc[tlo:e].reset_index(drop=True), state, cash[tlo:e])
+        oos[s:e] = r[s - tlo:]
+        plog.append({"start": str(df["date"].iloc[s]),
+                     "params": {k: (round(v, 3) if isinstance(v, float) else v)
+                                for k, v in state.items()}})
+    return oos[first_test:], plog
+
+
+def _segment_stats(r: np.ndarray, bh: np.ndarray, seg: int) -> dict:
+    rets, mdds, beats = [], [], []
+    for i in range(0, len(r), seg):
+        eq = np.cumprod(1.0 + r[i:i + seg])
+        rets.append(eq[-1] - 1.0)
+        mdds.append((eq / np.maximum.accumulate(eq) - 1.0).min())
+        beats.append(rets[-1] > np.prod(1.0 + bh[i:i + seg]) - 1.0)
+    return {"median": float(np.median(rets)), "worst": float(np.min(rets)),
+            "worst_mdd": float(np.min(mdds)), "beat_bh": float(np.mean(beats)),
+            "segments": len(rets)}
+
+
+def strategy_tournament(df: pd.DataFrame, cash: np.ndarray, first_test: int,
+                        names: list[str] | None = None, test_days: int = 252,
+                        train_days: int = 756, steps: int = 120, seed: int = 42,
+                        fee_bps: float = 10.0, short_fee: float = 0.0095,
+                        objective: str = "sharpe", sma_days: int = 200,
+                        on_progress=None) -> tuple[pd.DataFrame, dict]:
+    """所有策略在同一段樣本外期間比賽：預設參數版 vs 滾動最佳化版，並附買進持有與均線濾網。
+
+    樣本外期間 = 第 first_test 天到最後；績效以 full_metrics（扣國庫券）與逐段（每 test_days 天）統計。
+    回傳 (統計表, {策略: 最近一段使用的參數})。
+    """
+    from .strategies import STRATEGIES
+
+    names = names or [k for k in STRATEGIES if k != "buyhold"]
+    rf = cash[first_test:]
+    bh = df["close"].pct_change().fillna(0.0).to_numpy()[first_test:]
+    curves: dict[str, tuple[str, str, np.ndarray]] = {
+        "買進持有": ("基準", "買進持有", bh),
+        f"{sma_days}日均線濾網": ("基準", f"{sma_days}日均線濾網（固定規則）",
+                                switch_returns(df, df, None, cash, sma_days, fee_bps)[first_test:]),
+    }
+    latest: dict[str, dict] = {}
+    for i, name in enumerate(names):
+        if on_progress:
+            on_progress(i, len(names), name)
+        d = run_signals(df, make(name), fee_bps=fee_bps, cash_rate=cash,
+                        short_fee=short_fee).returns.to_numpy()[first_test:]
+        curves[f"{name} 預設"] = (name, "預設參數", d)
+        wf, plog = walk_forward_strategy(df, cash, name, first_test, test_days=test_days,
+                                         train_days=train_days, steps=steps, seed=seed,
+                                         fee_bps=fee_bps, short_fee=short_fee,
+                                         objective=objective)
+        curves[f"{name} 最佳化"] = (name, "滾動最佳化", wf)
+        latest[name] = plog[-1]
+    rows = []
+    for key, (strat, version, r) in curves.items():
+        rows.append({"strategy": key, "family": strat, "version": version,
+                     **full_metrics(r, rf), **_segment_stats(r, bh, test_days)})
+    return pd.DataFrame(rows), latest
