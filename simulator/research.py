@@ -142,12 +142,14 @@ def momentum_signal(df: pd.DataFrame, lookback: int = 120) -> dict:
 
 def switch_returns(sig_df: pd.DataFrame, long_df: pd.DataFrame, alt_df: pd.DataFrame | None,
                    cash: np.ndarray, sma_days: int = 200, fee_bps: float = 10.0,
-                   rule: str = "sma", lookback: int = 120) -> np.ndarray:
+                   rule: str = "sma", lookback: int = 120,
+                   alt_weight: float = 1.0) -> np.ndarray:
     """趨勢切換策略的每日報酬：sig_df 訊號為多 → 下一日持有 long_df，否則持有 alt_df。
 
     rule="sma"：收盤站上 sma_days 日均線；rule="mom"：收盤高於 lookback 天前收盤。
     alt_df 為 None 時改持有國庫券（等同濾網）。三者需已對齊日期。
-    換手時兩邊都要成交（賣一檔、買另一檔），持有國庫券時只算一邊。
+    alt_weight < 1 時，避險部位只有該比例放 alt_df、其餘放國庫券（每日再平衡）。
+    換手時兩邊都要成交（賣一檔、買另一檔），持有國庫券的部分只算一邊。
     """
     c = sig_df["close"].astype(float).reset_index(drop=True)
     ref = c.rolling(sma_days).mean() if rule == "sma" else c.shift(lookback)
@@ -156,7 +158,10 @@ def switch_returns(sig_df: pd.DataFrame, long_df: pd.DataFrame, alt_df: pd.DataF
     if alt_df is None:
         alt_r, legs = cash / 252.0, 1.0
     else:
-        alt_r, legs = alt_df["close"].pct_change().fillna(0.0).to_numpy(), 2.0
+        w = float(alt_weight)
+        alt_r = (w * alt_df["close"].pct_change().fillna(0.0).to_numpy()
+                 + (1.0 - w) * cash / 252.0)
+        legs = 1.0 + w
     switches = np.abs(np.diff(pos, prepend=0.0))
     return pos * long_r + (1.0 - pos) * alt_r - switches * legs * fee_bps / 10_000.0
 
@@ -264,7 +269,8 @@ def _dip_lab_configs() -> list[dict]:
 def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start: int,
                  window: int = 252, step: int = 21, fee_bps: float = 10.0,
                  sma_days: int = 200, short_fee: float = 0.0095,
-                 alts: dict[str, pd.DataFrame] | None = None
+                 alts: dict[str, pd.DataFrame] | None = None,
+                 alt_weights: dict[str, float] | None = None
                  ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """比較多種候選策略在相同一年期滾動區間的表現。
 
@@ -281,10 +287,13 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
     cont = _continuous_candidates(prices, cash, fee_bps, sma_days, short_fee)
     for t, df in prices.items():
         for a, adf in (alts or {}).items():
-            cont[f"{t} {sma_days}日均線 跌破換{a}"] = switch_returns(df, df, adf, cash,
-                                                                 sma_days, fee_bps)
-            cont[f"{t} 120日動量 轉負換{a}"] = switch_returns(df, df, adf, cash, sma_days,
-                                                         fee_bps, rule="mom", lookback=120)
+            w = (alt_weights or {}).get(a, 1.0)
+            name = a.split(":")[0]
+            label = name if w >= 1.0 else f"{w:.0%}{name}+國庫券"
+            cont[f"{t} {sma_days}日均線 跌破換{label}"] = switch_returns(
+                df, df, adf, cash, sma_days, fee_bps, alt_weight=w)
+            cont[f"{t} 120日動量 轉負換{label}"] = switch_returns(
+                df, df, adf, cash, sma_days, fee_bps, rule="mom", lookback=120, alt_weight=w)
     dip_cfgs = _dip_lab_configs()
 
     recs = []

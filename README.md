@@ -198,7 +198,8 @@ python -m simulator.cli best -t QQQ QLD2X --years 26 --alt QID2X      # 含網�
 python -m simulator.cli signal --alt QID --capital 1000              # 今日該持有哪一檔
 ```
 
-避險標的也可以換成債券或黃金，例如 `best -t QQQ --years 20 --alt SHY IEF TLT GLD`。
+避險標的也可以換成債券或黃金，例如 `best -t QQQ --years 20 --alt SHY IEF TLT GLD`；
+寫成 `GLD:0.5` 代表避險部位一半放 GLD、一半放國庫券（`signal --alt GLD:0.5` 也適用）。
 
 `--alt` 會為每檔標的新增「200 日均線 跌破換 X」與「120 日動量 轉負換 X」候選：訊號為多時持有該標的，
 轉弱時改持有 X（換手兩邊都計交易成本）。合成反向 ETF 時，利率項為

@@ -61,6 +61,18 @@ def _table(header: list[str], rows: list[list[str]]) -> None:
         print("  ".join(cells))
 
 
+def _parse_alt(spec: str) -> tuple[str, float]:
+    """「GLD」→ (GLD, 1.0)；「GLD:0.5」→ 避險部位 50% 放 GLD、其餘放國庫券。"""
+    name, _, w = spec.partition(":")
+    try:
+        weight = float(w) if w else 1.0
+    except ValueError:
+        raise data.DataError(f"--alt 格式應為 代號 或 代號:比例（例如 GLD:0.5），收到 {spec!r}")
+    if not 0 < weight <= 1:
+        raise data.DataError(f"--alt 的比例要在 0 到 1 之間，收到 {spec!r}")
+    return name, weight
+
+
 def _pct(v, digits: int = 2) -> str:
     return "—" if v is None or v != v else f"{v:.{digits}%}"
 
@@ -170,7 +182,7 @@ def _main(argv: list[str] | None = None) -> None:
                    help="策略部位佔總資金的比例（其餘放國庫券），預設對應約 -20/-35/-45%% 回撤")
     p.add_argument("--capital", type=float, default=None, help="總資金（選填，會換算成金額）")
     p.add_argument("--alt", default=None,
-                   help="跌破均線時改持有的標的（例如 QID）；不指定則轉國庫券")
+                   help="轉弱時改持有的標的（例如 GLD，或 GLD:0.5 代表一半 GLD 一半國庫券）；不指定則轉國庫券")
     p.add_argument("--no-refresh", action="store_true", help="不重新下載，直接用 data/ 裡的資料")
 
     p = sub.add_parser("synth", help="用標的每日報酬合成槓桿 ETF，補足上市前的歷史")
@@ -189,7 +201,7 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--step-days", type=int, default=21)
     p.add_argument("--sma-days", type=int, default=200, help="均線濾網天數（預設 200）")
     p.add_argument("--alt", nargs="*", default=[],
-                   help="跌破均線時改持有的標的（例如 QID），會新增「跌破換 X」的候選策略")
+                   help="轉弱時改持有的標的（例如 GLD；GLD:0.5 = 一半 GLD 一半國庫券），新增「換 X」候選策略")
     p.add_argument("--short-fee", type=float, default=0.0095,
                    help="做空年費用（以反向 ETF 計，預設 0.95%%）；空單另賺國庫券利率")
     p.add_argument("--cash-rate", default="auto")
@@ -386,17 +398,19 @@ def _main(argv: list[str] | None = None) -> None:
 
         t0 = args.tickers[0]
         s0 = sigs[t0]
-        if args.alt:
-            adf = load(args.alt) if args.no_refresh else data.refresh(args.alt, args.data_dir)
-            print(f"\n{args.alt} 最新價 {float(adf['close'].iloc[-1]):.2f}（{adf['date'].iloc[-1]}）")
+        alt_name, alt_w = _parse_alt(args.alt) if args.alt else (None, 0.0)
+        if alt_name:
+            adf = load(alt_name) if args.no_refresh else data.refresh(alt_name, args.data_dir)
+            print(f"\n{alt_name} 最新價 {float(adf['close'].iloc[-1]):.2f}（{adf['date'].iloc[-1]}）")
+        alt_desc = (alt_name if alt_w >= 1 else f"{alt_w:.0%} {alt_name} + 國庫券") if alt_name else ""
         print(f"\n=== 資金配置（依 {t0} 的訊號"
-              + (f"；跌破時改持有 {args.alt}" if args.alt else "") + "）===")
-        names = [t0] + ([args.alt] if args.alt else [])
+              + (f"；轉弱時策略部位改持有 {alt_desc}" if alt_name else "") + "）===")
+        names = [t0] + ([alt_name] if alt_name else [])
         rows = []
         for w in args.weights:
             alloc = {t0: w if s0["above"] else 0.0}
-            if args.alt:
-                alloc[args.alt] = 0.0 if s0["above"] else w
+            if alt_name:
+                alloc[alt_name] = 0.0 if s0["above"] else w * alt_w
             cash_part = 1.0 - sum(alloc.values())
             row = [f"策略部位 {w:.0%}"] + [_pct(alloc[n], 0) for n in names] + [_pct(cash_part, 0)]
             if args.capital:
@@ -407,16 +421,16 @@ def _main(argv: list[str] | None = None) -> None:
         if args.capital:
             header += [f"{n} 金額" for n in names] + ["國庫券金額"]
         _table(header, rows)
-        fallback = args.alt or "國庫券"
+        fallback = alt_desc or "國庫券"
         cond = (f"收盤價高於 {args.lookback} 個交易日前的收盤價" if args.rule == "mom"
                 else f"收盤價在 {args.sma_days} 日均線之上")
         print(f"\n規則：每個交易日收盤後檢查；{cond} → 持有到下一次檢查；否則 → 換成{fallback}。"
               "\n回測的成交方式是「看收盤訊號、以收盤價換手」，實務上可在收盤前幾分鐘用接近收盤的價格判斷並下單。"
               "\n這是依回測規則計算的訊號，不是投資建議；下單前請自行確認。")
         if args.alt:
-            print(f"\n注意：上表是「跌破改持有 {args.alt}」的版本。請先用 "
-                  f"best --alt {args.alt} 確認它的回測優於跌破轉國庫券，再照此配置；"
-                  "不加 --alt 即為跌破轉國庫券的版本。")
+            print(f"\n注意：上表是「轉弱時改持有 {alt_desc}」的版本。請先用 "
+                  f"best --alt {args.alt} 確認它的回測優於轉國庫券，再照此配置；"
+                  "不加 --alt 即為轉國庫券的版本。")
 
     elif args.cmd == "synth":
         from .research import compare_series, synth_leveraged
@@ -444,10 +458,14 @@ def _main(argv: list[str] | None = None) -> None:
     elif args.cmd == "best":
         from .research import pick_by_risk, strategy_lab
         # 起點前若有更早的資料會拿來給均線暖機；沒有的話起點會往後延 sma_days 天
+        alt_specs = [_parse_alt(a) for a in args.alt]
+        alt_names = list(dict.fromkeys(n for n, _ in alt_specs))
         raw = {t: data.load_history(t, args.data_dir, years=args.years)
-               for t in args.tickers + args.alt}
+               for t in args.tickers + alt_names}
         prices = data.align_universe(raw)
-        alts = {a: prices.pop(a) for a in args.alt}
+        alt_dfs = {n: prices.pop(n) for n in alt_names}
+        alts = {f"{n}:{w:g}": alt_dfs[n] for n, w in alt_specs}
+        alt_weights = {f"{n}:{w:g}": w for n, w in alt_specs}
         dates = prices[args.tickers[0]]["date"]
         cut = pd.Timestamp.today().normalize() - pd.DateOffset(years=args.years)
         first_start = int((pd.to_datetime(dates) < cut).sum())
@@ -457,7 +475,7 @@ def _main(argv: list[str] | None = None) -> None:
         win, summ = strategy_lab(prices, cash, first_start, window=args.window_days,
                                  step=args.step_days, fee_bps=args.fee_bps,
                                  sma_days=args.sma_days, short_fee=args.short_fee,
-                                 alts=alts)
+                                 alts=alts, alt_weights=alt_weights)
         base = f"{args.tickers[0]} 買進持有"
         print(f"\n=== 策略實驗室：{'、'.join(args.tickers)}，起點 {win['start'].iloc[0]} ~ "
               f"{win['start'].iloc[-1]}，共 {win['start'].nunique()} 段一年期區間 ===")
