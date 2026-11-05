@@ -198,8 +198,10 @@ python -m simulator.cli best -t QQQ QLD2X --years 26 --alt QID2X      # 含網�
 python -m simulator.cli signal --alt QID --capital 1000              # 今日該持有哪一檔
 ```
 
-`--alt` 會為每檔標的新增「200 日均線 跌破換 X」候選：站上均線持有該標的，
-跌破時改持有 X（換手兩邊都計交易成本）。合成反向 ETF 時，利率項為
+避險標的也可以換成債券或黃金，例如 `best -t QQQ --years 20 --alt SHY IEF TLT GLD`。
+
+`--alt` 會為每檔標的新增「200 日均線 跌破換 X」與「120 日動量 轉負換 X」候選：訊號為多時持有該標的，
+轉弱時改持有 X（換手兩邊都計交易成本）。合成反向 ETF 時，利率項為
 (1 − 槓桿) × 國庫券利率（擔保現金與空方利息收入）。
 
 ### 合成槓桿 ETF：補足上市前的歷史

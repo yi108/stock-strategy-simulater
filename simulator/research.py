@@ -141,15 +141,17 @@ def momentum_signal(df: pd.DataFrame, lookback: int = 120) -> dict:
 
 
 def switch_returns(sig_df: pd.DataFrame, long_df: pd.DataFrame, alt_df: pd.DataFrame | None,
-                   cash: np.ndarray, sma_days: int = 200, fee_bps: float = 10.0) -> np.ndarray:
-    """均線切換策略的每日報酬：sig_df 收盤站上均線 → 下一日持有 long_df，否則持有 alt_df。
+                   cash: np.ndarray, sma_days: int = 200, fee_bps: float = 10.0,
+                   rule: str = "sma", lookback: int = 120) -> np.ndarray:
+    """趨勢切換策略的每日報酬：sig_df 訊號為多 → 下一日持有 long_df，否則持有 alt_df。
 
-    alt_df 為 None 時改持有國庫券（等同均線濾網）。三者需已對齊日期。
+    rule="sma"：收盤站上 sma_days 日均線；rule="mom"：收盤高於 lookback 天前收盤。
+    alt_df 為 None 時改持有國庫券（等同濾網）。三者需已對齊日期。
     換手時兩邊都要成交（賣一檔、買另一檔），持有國庫券時只算一邊。
     """
     c = sig_df["close"].astype(float).reset_index(drop=True)
-    sma = c.rolling(sma_days).mean()
-    pos = ((c > sma) & sma.notna()).astype(float).shift(1).fillna(0.0).to_numpy()
+    ref = c.rolling(sma_days).mean() if rule == "sma" else c.shift(lookback)
+    pos = ((c > ref) & ref.notna()).astype(float).shift(1).fillna(0.0).to_numpy()
     long_r = long_df["close"].pct_change().fillna(0.0).to_numpy()
     if alt_df is None:
         alt_r, legs = cash / 252.0, 1.0
@@ -281,6 +283,8 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
         for a, adf in (alts or {}).items():
             cont[f"{t} {sma_days}日均線 跌破換{a}"] = switch_returns(df, df, adf, cash,
                                                                  sma_days, fee_bps)
+            cont[f"{t} 120日動量 轉負換{a}"] = switch_returns(df, df, adf, cash, sma_days,
+                                                         fee_bps, rule="mom", lookback=120)
     dip_cfgs = _dip_lab_configs()
 
     recs = []
