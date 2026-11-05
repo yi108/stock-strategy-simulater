@@ -166,6 +166,8 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--weights", nargs="+", type=float, default=[0.45, 0.78, 1.0],
                    help="策略部位佔總資金的比例（其餘放國庫券），預設對應約 -20/-35/-45%% 回撤")
     p.add_argument("--capital", type=float, default=None, help="總資金（選填，會換算成金額）")
+    p.add_argument("--alt", default=None,
+                   help="跌破均線時改持有的標的（例如 QID）；不指定則轉國庫券")
     p.add_argument("--no-refresh", action="store_true", help="不重新下載，直接用 data/ 裡的資料")
 
     p = sub.add_parser("synth", help="用標的每日報酬合成槓桿 ETF，補足上市前的歷史")
@@ -183,6 +185,8 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--window-days", type=int, default=252)
     p.add_argument("--step-days", type=int, default=21)
     p.add_argument("--sma-days", type=int, default=200, help="均線濾網天數（預設 200）")
+    p.add_argument("--alt", nargs="*", default=[],
+                   help="跌破均線時改持有的標的（例如 QID），會新增「跌破換 X」的候選策略")
     p.add_argument("--short-fee", type=float, default=0.0095,
                    help="做空年費用（以反向 ETF 計，預設 0.95%%）；空單另賺國庫券利率")
     p.add_argument("--cash-rate", default="auto")
@@ -354,17 +358,26 @@ def _main(argv: list[str] | None = None) -> None:
 
         t0 = args.tickers[0]
         s0 = sigs[t0]
-        print(f"\n=== 資金配置（依 {t0} 的訊號）===")
+        if args.alt:
+            adf = load(args.alt) if args.no_refresh else data.refresh(args.alt, args.data_dir)
+            print(f"\n{args.alt} 最新價 {float(adf['close'].iloc[-1]):.2f}（{adf['date'].iloc[-1]}）")
+        print(f"\n=== 資金配置（依 {t0} 的訊號"
+              + (f"；跌破時改持有 {args.alt}" if args.alt else "") + "）===")
+        names = [t0] + ([args.alt] if args.alt else [])
         rows = []
         for w in args.weights:
-            hold = w if s0["above"] else 0.0
-            row = [f"策略部位 {w:.0%}", _pct(hold, 0), _pct(1 - hold, 0)]
+            alloc = {t0: w if s0["above"] else 0.0}
+            if args.alt:
+                alloc[args.alt] = 0.0 if s0["above"] else w
+            cash_part = 1.0 - sum(alloc.values())
+            row = [f"策略部位 {w:.0%}"] + [_pct(alloc[n], 0) for n in names] + [_pct(cash_part, 0)]
             if args.capital:
-                row += [f"{args.capital * hold:,.0f}", f"{args.capital * (1 - hold):,.0f}"]
+                row += [f"{args.capital * alloc[n]:,.0f}" for n in names]
+                row += [f"{args.capital * cash_part:,.0f}"]
             rows.append(row)
-        header = ["你的設定", t0, "國庫券／貨幣基金"]
+        header = ["你的設定"] + names + ["國庫券／貨幣基金"]
         if args.capital:
-            header += [f"{t0} 金額", "國庫券金額"]
+            header += [f"{n} 金額" for n in names] + ["國庫券金額"]
         _table(header, rows)
         print("\n規則：每個交易日收盤後檢查；收盤價在均線之上 → 持有到下一次檢查；跌破 → 換成國庫券。"
               "\n回測的成交方式是「看收盤訊號、以收盤價換手」，實務上可在收盤前幾分鐘用接近收盤的價格判斷並下單。"
@@ -377,8 +390,10 @@ def _main(argv: list[str] | None = None) -> None:
         syn = synth_leveraged(base, cash, leverage=args.leverage, fee=args.fee)
         path = os.path.join(args.data_dir, f"{args.name}.csv")
         data.save_csv(syn, path)
+        rate_note = (f"融資成本 = {args.leverage - 1:g} × 國庫券利率" if args.leverage >= 1 else
+                     f"反向：擔保現金與空方利息收入 = {1 - args.leverage:g} × 國庫券利率")
         print(f"已合成 {args.name} = {args.leverage:g} 倍 {args.base}（管理費 {args.fee:.2%}、"
-              f"融資成本 = {args.leverage - 1:g} × 國庫券利率），"
+              f"{rate_note}），"
               f"{syn['date'].iloc[0]} ~ {syn['date'].iloc[-1]}，存到 {path}")
         if args.check:
             real = data.load_or_fetch(args.check, args.data_dir, period="max")
@@ -395,8 +410,9 @@ def _main(argv: list[str] | None = None) -> None:
         from .research import pick_by_risk, strategy_lab
         # 起點前若有更早的資料會拿來給均線暖機；沒有的話起點會往後延 sma_days 天
         raw = {t: data.load_history(t, args.data_dir, years=args.years)
-               for t in args.tickers}
+               for t in args.tickers + args.alt}
         prices = data.align_universe(raw)
+        alts = {a: prices.pop(a) for a in args.alt}
         dates = prices[args.tickers[0]]["date"]
         cut = pd.Timestamp.today().normalize() - pd.DateOffset(years=args.years)
         first_start = int((pd.to_datetime(dates) < cut).sum())
@@ -405,7 +421,8 @@ def _main(argv: list[str] | None = None) -> None:
             cash = np.full(len(dates), cash)
         win, summ = strategy_lab(prices, cash, first_start, window=args.window_days,
                                  step=args.step_days, fee_bps=args.fee_bps,
-                                 sma_days=args.sma_days, short_fee=args.short_fee)
+                                 sma_days=args.sma_days, short_fee=args.short_fee,
+                                 alts=alts)
         base = f"{args.tickers[0]} 買進持有"
         print(f"\n=== 策略實驗室：{'、'.join(args.tickers)}，起點 {win['start'].iloc[0]} ~ "
               f"{win['start'].iloc[-1]}，共 {win['start'].nunique()} 段一年期區間 ===")

@@ -174,6 +174,19 @@ python -m simulator.cli signal --weights 0.5         # 自訂策略部位比例
 狀態已持續幾天、是否剛翻轉，以及「下一個交易日收盤要高於（或守住）多少」的臨界價；
 最後依策略部位比例列出 QLD 與國庫券的配置。盤中執行時會標示為尚未收盤的價格。
 
+### 跌破均線改持有反向 ETF（例如 QID）
+
+```bash
+python -m simulator.cli best -t QQQ QLD --years 20 --alt QID          # 用真實 QID（2006 起）
+python -m simulator.cli synth -t QQQ --leverage -2 --name QID2X --check QID
+python -m simulator.cli best -t QQQ QLD2X --years 26 --alt QID2X      # 含網路泡沫
+python -m simulator.cli signal --alt QID --capital 1000              # 今日該持有哪一檔
+```
+
+`--alt` 會為每檔標的新增「200 日均線 跌破換 X」候選：站上均線持有該標的，
+跌破時改持有 X（換手兩邊都計交易成本）。合成反向 ETF 時，利率項為
+(1 − 槓桿) × 國庫券利率（擔保現金與空方利息收入）。
+
 ### 合成槓桿 ETF：補足上市前的歷史
 
 QLD 2006 年才上市。`synth` 用 QQQ 的每日報酬合成兩倍 ETF（扣管理費與融資成本），
