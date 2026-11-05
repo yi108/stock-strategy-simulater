@@ -182,6 +182,7 @@ python -m simulator.cli tournament -t QQQ --objective calmar # 改以 Calmar 為
 python -m simulator.cli signal                       # 預設 QLD（操作）+ QQQ（參考）
 python -m simulator.cli signal --capital 1000000     # 換算成金額
 python -m simulator.cli signal --weights 0.5         # 自訂策略部位比例
+python -m simulator.cli signal -t QQQ --rule mom    # 改用 120 日動量濾網（--lookback 調天數）
 ```
 
 重新下載最近兩年報價，算出 200 日均線濾網今天的訊號（持有或轉國庫券）、

@@ -113,6 +113,33 @@ def trend_signal(df: pd.DataFrame, sma_days: int = 200) -> dict:
             "threshold": threshold, "threshold_gap": threshold / c - 1.0}
 
 
+def momentum_signal(df: pd.DataFrame, lookback: int = 120) -> dict:
+    """時序動量濾網在最新一根日K的訊號（與回測的 tsmom(lookback) 規則相同）：
+    今天收盤 > lookback 個交易日前的收盤 → 持有，否則國庫券。
+
+    下一個交易日的臨界價 = 明天要比較的那一天（往回 lookback-1 天）的收盤價。
+    """
+    close = df["close"].astype(float).reset_index(drop=True)
+    if len(close) < lookback + 2:
+        raise ValueError(f"資料只有 {len(close)} 天，不夠計算 {lookback} 日動量訊號")
+    mom = close / close.shift(lookback) - 1.0
+    above = (mom > 0) & mom.notna()
+    last = len(close) - 1
+    state = bool(above.iloc[last])
+    run = 0
+    for v in above.iloc[::-1]:
+        if bool(v) != state:
+            break
+        run += 1
+    c = float(close.iloc[last])
+    ref = float(close.iloc[last - lookback])
+    threshold = float(close.iloc[last + 1 - lookback])
+    return {"date": str(df["date"].iloc[-1]), "close": c, "ref": ref,
+            "ref_date": str(df["date"].iloc[last - lookback]), "gap": c / ref - 1.0,
+            "above": state, "switched": state != bool(above.iloc[last - 1]),
+            "days_in_state": run, "threshold": threshold, "threshold_gap": threshold / c - 1.0}
+
+
 def switch_returns(sig_df: pd.DataFrame, long_df: pd.DataFrame, alt_df: pd.DataFrame | None,
                    cash: np.ndarray, sma_days: int = 200, fee_bps: float = 10.0) -> np.ndarray:
     """均線切換策略的每日報酬：sig_df 收盤站上均線 → 下一日持有 long_df，否則持有 alt_df。
@@ -297,12 +324,16 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
     return win, pd.DataFrame(rows)
 
 
-def pick_by_risk(summary: pd.DataFrame, budgets=(0.20, 0.35, 0.50, None)) -> list[dict]:
+def pick_by_risk(summary: pd.DataFrame, budgets=(0.20, 0.35, 0.50, None),
+                 exclude: str = "逢跌加碼") -> list[dict]:
     """在「全期與任一年內的最大回撤」都不超過上限的策略中，挑出全期年化報酬最高者。
 
     同時看一年期回撤：全期只是一條路徑，從現金開始的一年期區間能補上不同進場時點的風險。
+    名稱含 exclude 的策略不列入（逢跌加碼的全期數字取決於起點是否剛好空手）。
     """
     picks = []
+    if exclude:
+        summary = summary[~summary["strategy"].str.contains(exclude)]
     risk = summary[["full_mdd", "worst_mdd"]].min(axis=1)
     for b in budgets:
         # 以畫面顯示的精度（0.01%）比較，避免 -20.00% 因浮點誤差被判為超過 -20%

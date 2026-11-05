@@ -159,10 +159,13 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results", help="每段明細 CSV 的輸出目錄")
 
-    p = sub.add_parser("signal", help="今日訊號：200 日均線濾網該持有還是轉國庫券、資金怎麼配")
+    p = sub.add_parser("signal", help="今日訊號：趨勢濾網該持有還是轉國庫券、資金怎麼配")
     p.add_argument("-t", "--tickers", nargs="+", default=["QLD", "QQQ"],
                    help="第一檔為實際操作的標的（預設 QLD），其餘僅供參考")
+    p.add_argument("--rule", default="sma", choices=["sma", "mom"],
+                   help="sma = 均線濾網（預設）；mom = 時序動量濾網")
     p.add_argument("--sma-days", type=int, default=200)
+    p.add_argument("--lookback", type=int, default=120, help="--rule mom 的回看天數（預設 120）")
     p.add_argument("--weights", nargs="+", type=float, default=[0.45, 0.78, 1.0],
                    help="策略部位佔總資金的比例（其餘放國庫券），預設對應約 -20/-35/-45%% 回撤")
     p.add_argument("--capital", type=float, default=None, help="總資金（選填，會換算成金額）")
@@ -346,22 +349,32 @@ def _main(argv: list[str] | None = None) -> None:
               "不挑時機；差距為正代表逢跌買進的時機有加分。")
 
     elif args.cmd == "signal":
-        from .research import trend_signal
+        from .research import momentum_signal, trend_signal
         now_ny = pd.Timestamp.now(tz="America/New_York")
         sigs = {}
         for t in args.tickers:
             df = load(t) if args.no_refresh else data.refresh(t, args.data_dir)
-            s = trend_signal(df, args.sma_days)
+            if args.rule == "mom":
+                s = momentum_signal(df, args.lookback)
+                title = f"{args.lookback} 日動量濾網"
+                ref_rows = [[f"{args.lookback} 個交易日前收盤（{s['ref_date']}）", f"{s['ref']:.2f}"],
+                            ["這段期間漲跌", f"{s['gap']:+.2%}"]]
+                hold_txt, out_txt = "（動量為正）", "（動量為負）"
+            else:
+                s = trend_signal(df, args.sma_days)
+                title = f"{args.sma_days} 日均線濾網"
+                ref_rows = [[f"{args.sma_days} 日均線", f"{s['sma']:.2f}"],
+                            ["距離均線", f"{s['gap']:+.2%}"]]
+                hold_txt, out_txt = "（站上均線）", "（跌破均線）"
             sigs[t] = s
             intraday = (s["date"] == now_ny.strftime("%Y-%m-%d") and now_ny.weekday() < 5
                         and (now_ny.hour, now_ny.minute) < (16, 0))
             when = "盤中最新價（尚未收盤，收盤前訊號可能改變）" if intraday else "收盤"
-            print(f"\n=== {t}  {args.sma_days} 日均線濾網（{s['date']} {when}）===")
+            print(f"\n=== {t}  {title}（{s['date']} {when}）===")
             _table(["項目", "數值"], [
                 ["收盤價", f"{s['close']:.2f}"],
-                [f"{args.sma_days} 日均線", f"{s['sma']:.2f}"],
-                ["距離均線", f"{s['gap']:+.2%}"],
-                ["訊號", f"持有 {t}（站上均線）" if s["above"] else "轉國庫券（跌破均線）"],
+                *ref_rows,
+                ["訊號", f"持有 {t}{hold_txt}" if s["above"] else f"轉國庫券{out_txt}"],
                 ["這個狀態已持續", f"{s['days_in_state']} 個交易日"
                                   + ("（今天剛翻轉！）" if s["switched"] else "")],
                 ["下一個交易日的臨界收盤價", f"{s['threshold']:.2f}（距今 {s['threshold_gap']:+.2%}）"],
