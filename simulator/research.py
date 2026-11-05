@@ -174,7 +174,8 @@ STATIC_LEVELS = {0: (0.3, 0.5, 0.7), 1: (0.5,)}   # 第一檔標的 / 其他標�
 def _continuous_candidates(prices: dict[str, pd.DataFrame], cash: np.ndarray,
                            fee_bps: float, sma_days: int,
                            short_fee: float) -> dict[str, np.ndarray]:
-    """在完整歷史上算出每日報酬的「持續型」策略：買進持有、固定比例、均線濾網、均線多空。"""
+    """在完整歷史上算出每日報酬的「持續型」策略：買進持有、固定比例、均線濾網、
+    120 日動量濾網（過去 120 天報酬為正持有，否則國庫券）、均線多空。"""
     out: dict[str, np.ndarray] = {}
     daily_cash = cash / 252.0
     for k, (t, df) in enumerate(prices.items()):
@@ -185,6 +186,8 @@ def _continuous_candidates(prices: dict[str, pd.DataFrame], cash: np.ndarray,
         trend = run_signals(df, make("sma", fast=1, slow=sma_days), fee_bps=fee_bps,
                             cash_rate=cash)
         out[f"{t} {sma_days}日均線濾網"] = trend.returns.to_numpy()
+        mom = run_signals(df, make("tsmom", lookback=120), fee_bps=fee_bps, cash_rate=cash)
+        out[f"{t} 120日動量濾網"] = mom.returns.to_numpy()
         ls = run_signals(df, make("sma", fast=1, slow=sma_days, short=1), fee_bps=fee_bps,
                          cash_rate=cash, short_fee=short_fee)
         out[f"{t} {sma_days}日均線多空"] = ls.returns.to_numpy()
@@ -390,7 +393,8 @@ def _segment_stats(r: np.ndarray, bh: np.ndarray, seg: int) -> dict:
         eq = np.cumprod(1.0 + r[i:i + seg])
         rets.append(eq[-1] - 1.0)
         mdds.append((eq / np.maximum.accumulate(eq) - 1.0).min())
-        beats.append(rets[-1] > np.prod(1.0 + bh[i:i + seg]) - 1.0)
+        # 與買進持有完全相同的報酬只會有浮點誤差，不算贏
+        beats.append(rets[-1] > np.prod(1.0 + bh[i:i + seg]) - 1.0 + 1e-9)
     return {"median": float(np.median(rets)), "worst": float(np.min(rets)),
             "worst_mdd": float(np.min(mdds)), "beat_bh": float(np.mean(beats)),
             "segments": len(rets)}
