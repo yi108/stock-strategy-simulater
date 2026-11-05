@@ -379,9 +379,14 @@ def _main(argv: list[str] | None = None) -> None:
         if args.capital:
             header += [f"{n} 金額" for n in names] + ["國庫券金額"]
         _table(header, rows)
-        print("\n規則：每個交易日收盤後檢查；收盤價在均線之上 → 持有到下一次檢查；跌破 → 換成國庫券。"
+        fallback = args.alt or "國庫券"
+        print(f"\n規則：每個交易日收盤後檢查；收盤價在均線之上 → 持有到下一次檢查；跌破 → 換成{fallback}。"
               "\n回測的成交方式是「看收盤訊號、以收盤價換手」，實務上可在收盤前幾分鐘用接近收盤的價格判斷並下單。"
               "\n這是依回測規則計算的訊號，不是投資建議；下單前請自行確認。")
+        if args.alt:
+            print(f"\n注意：上表是「跌破改持有 {args.alt}」的版本。請先用 "
+                  f"best --alt {args.alt} 確認它的回測優於跌破轉國庫券，再照此配置；"
+                  "不加 --alt 即為跌破轉國庫券的版本。")
 
     elif args.cmd == "synth":
         from .research import compare_series, synth_leveraged
