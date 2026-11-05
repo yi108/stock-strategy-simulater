@@ -223,6 +223,23 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--out-dir", default="results")
 
+    p = sub.add_parser("bottom", help="抄底研究：找出歷史上跟現在跌幅相近的時刻，比較各種進場方式")
+    p.add_argument("-t", "--ticker", default="QQQ", help="標的（建議也跑 ^NDX，可回溯到 1985 年）")
+    p.add_argument("--years", type=int, default=40, help="使用最近幾年的資料（不足時用全部）")
+    p.add_argument("--dd", type=float, default=None,
+                   help="指定要研究的跌幅（例如 0.15 = 從一年高點跌 15%%）；預設用今天的跌幅")
+    p.add_argument("--band", type=float, default=0.025, help="相似跌幅的容許範圍（預設 ±2.5%%）")
+    p.add_argument("--reset", type=float, default=0.05,
+                   help="跌幅回到這個比例以內才算新的一波修正（預設 5%%）")
+    p.add_argument("--any-trend", action="store_true",
+                   help="不要求歷史時點的 120 日動量方向與今天相同（預設要求相同）")
+    p.add_argument("--horizons", nargs="+", type=int, default=[252, 504],
+                   help="比較幾個交易日後的結果（預設 252 ≈ 1 年、504 ≈ 2 年）")
+    p.add_argument("--cash-rate", default="auto")
+    p.add_argument("--fee-bps", type=float, default=10.0)
+    p.add_argument("--no-refresh", action="store_true", help="不下載最新報價")
+    p.add_argument("--out-dir", default="results")
+
     p = sub.add_parser("rotation", help="動量輪動：每期買過去表現最強的 N 檔")
     p.add_argument("-t", "--tickers", nargs="*", default=None, help="預設用 data 目錄全部")
     p.add_argument("--lookback", type=int, default=126)
@@ -596,6 +613,82 @@ def _main(argv: list[str] | None = None) -> None:
               "「預設參數」是不做任何最佳化、直接用預設值的版本；"
               "「滾動最佳化」可調整策略參數、停損停利與是否做空（做空以反向 ETF 計）。"
               "\n最後挑出的第一名仍是在同一段歷史上比較出來的，排名接近的策略不要過度解讀。")
+
+    elif args.cmd == "bottom":
+        from .research import bottom_fishing_study, find_dip_events, summarize_bottom
+        t = args.ticker
+        # 先抓完整歷史（已存在則直接讀），再補上最新報價
+        df = data.load_or_fetch(t, args.data_dir, period="max")
+        if not args.no_refresh:
+            data.refresh(t, args.data_dir)
+            df = data.load_csv(os.path.join(args.data_dir, f"{t}.csv"))
+        cut = pd.Timestamp.today().normalize() - pd.DateOffset(years=args.years)
+        df = df[pd.to_datetime(df["date"]) >= cut].reset_index(drop=True)
+        span = (pd.Timestamp(df["date"].iloc[-1]) - pd.Timestamp(df["date"].iloc[0])).days
+        cash = cash_for(df, years=max(1, -(-span // 365)))
+        if isinstance(cash, float):
+            cash = np.full(len(df), cash)
+        close = df["close"].astype(float)
+        peak = close.rolling(252, min_periods=1).max()
+        dd_today = float(1 - close.iloc[-1] / peak.iloc[-1])
+        mom_up = bool(close.iloc[-1] > close.iloc[-121])
+        sma_up = bool(close.iloc[-1] > close.iloc[-200:].mean())
+        dd_now = args.dd if args.dd is not None else dd_today
+        print(f"=== {t} 抄底研究：資料 {df['date'].iloc[0]} ~ {df['date'].iloc[-1]} ===")
+        print(f"現在：收盤 {close.iloc[-1]:.2f}，過去一年高點 {peak.iloc[-1]:.2f}，"
+              f"跌幅 {dd_today:.1%}；120 日動量{'為正' if mom_up else '為負'}、"
+              f"{'站上' if sma_up else '跌破'} 200 日均線。")
+        if dd_now < args.reset + args.band:
+            print(f"目前跌幅只有 {dd_now:.1%}，離高點很近，不算在修正中；可用 --dd 指定想研究的跌幅。")
+            return
+        hmax = max(args.horizons)
+        mom_series = (close > close.shift(120)).to_numpy()
+        mask = None if args.any_trend else (mom_series == mom_up)
+        events = find_dip_events(df, dd_now, band=args.band, reset=args.reset, horizon=hmax,
+                                 mask=mask)
+        cond = "" if args.any_trend else f"，且當時 120 日動量也{'為正' if mom_up else '為負'}"
+        print(f"研究跌幅：{dd_now:.1%}（±{args.band:.1%}）{cond}。歷史上相似的修正共 {len(events)} 次"
+              f"（每波只取第一次符合條件的那天，之後還有 {hmax} 天資料者）。")
+        if len(events) < 3:
+            print("相似的事件太少，結果不具參考性；可放寬 --band 或改用 -t ^NDX 拉長歷史。")
+            if not events:
+                return
+
+        res_by_h = {h: bottom_fishing_study(df, cash, events, horizon=h, fee_bps=args.fee_bps)
+                    for h in args.horizons}
+        h0 = args.horizons[0]
+        lump = {h: r[r["strategy"] == "立刻全部買進"].set_index("event")["ret"]
+                for h, r in res_by_h.items()}
+        first = res_by_h[h0].drop_duplicates("event").set_index("event")
+        print(f"\n各次相似時刻與之後的走勢：")
+        _table(["日期", "當時跌幅", f"之後 {h0} 天內再跌最多"]
+               + [f"立刻全買 {h} 天後" for h in args.horizons],
+               [[e, _pct(first.loc[e, "dd_at_event"], 1), _pct(first.loc[e, "further_drop"], 1)]
+                + [_pct(lump[h].get(e)) for h in args.horizons] for e in first.index])
+        fd = first["further_drop"]
+        print(f"→ 跌到這個深度之後，{h0} 天內再跌幅度的中位數 {fd.median():.1%}；"
+              f"再跌超過 10% 的有 {(fd <= -0.10).mean():.0%}，超過 20% 的有 {(fd <= -0.20).mean():.0%}。")
+
+        for h, res in res_by_h.items():
+            summ = summarize_bottom(res).sort_values("median", ascending=False)
+            print(f"\n{h} 個交易日後的結果（{len(events)} 次相似時刻；依中位數報酬排序）：")
+            _table(["進場方式", "平均報酬", "中位報酬", "最差", "最好", "勝過立刻全買",
+                    "平均最大回撤", "最差回撤", "期末持股"],
+                   [[r["strategy"], _pct(r["mean"]), _pct(r["median"]), _pct(r["worst"]),
+                     _pct(r["best"]),
+                     "—" if r["strategy"] == "立刻全部買進" else _pct(r["beat_lump"], 0),
+                     _pct(r["avg_mdd"]), _pct(r["worst_mdd"]), _pct(r["avg_expo"], 0)]
+                    for _, r in summ.iterrows()])
+
+        os.makedirs(args.out_dir, exist_ok=True)
+        out = os.path.join(args.out_dir, f"bottom_{t}.csv")
+        pd.concat([r.assign(horizon=h) for h, r in res_by_h.items()]).to_csv(
+            out, index=False, encoding="utf-8-sig")
+        print(f"\n每次事件 × 每種方式的明細已存到 {out}")
+        print("說明：除了「跟著 120 日動量進出」，其他方式都是從全現金開始、買進後一路持有，"
+              "只差在什麼時候、分幾次進場；還沒投入的現金按國庫券利率計息，買進收交易成本。"
+              "\n「再跌 X%」以事件當天的價格為基準；「跌到 -X%」以過去一年高點為基準。"
+              "\n相似事件通常只有十幾到幾十次，個別大事件（如 2000、2008 年）影響很大，看中位數與最差情況比看平均更可靠。")
 
     elif args.cmd == "rolling":
         from .research import by_start_year, dip_configs, rolling_dip, summarize

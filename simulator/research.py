@@ -483,3 +483,123 @@ def strategy_tournament(df: pd.DataFrame, cash: np.ndarray, first_test: int,
         rows.append({"strategy": key, "family": strat, "version": version,
                      **full_metrics(r, rf), **_segment_stats(r, bh, test_days)})
     return pd.DataFrame(rows), latest
+
+
+# ---------------------------------------------------------------- 抄底研究（條件式事件研究）
+
+def find_dip_events(df: pd.DataFrame, dd_now: float, band: float = 0.025,
+                    reset: float = 0.05, high_days: int = 252,
+                    horizon: int = 252, mask: np.ndarray | None = None) -> list[int]:
+    """找出歷史上「從過去 high_days 天高點的跌幅」與 dd_now 相近的時點。
+
+    每一波修正只取第一次跌進 [dd_now - band, dd_now + band] 的那一天；
+    要等跌幅回到 reset 以內（接近前高）後，才算新的一波。只保留之後還有 horizon 天資料的事件。
+    dd_now、band、reset 皆為正數比例（例如 0.13 代表跌 13%）。
+    mask（選填）為額外條件，例如「120 日動量為負」，事件日必須同時符合。
+    """
+    close = df["close"].astype(float).reset_index(drop=True)
+    dd = 1.0 - close / close.rolling(high_days, min_periods=1).max()
+    lo, hi = max(0.0, dd_now - band), dd_now + band
+    events, armed = [], True
+    for i in range(high_days, len(close) - horizon):
+        if dd.iloc[i] <= reset:
+            armed = True
+        elif armed and lo <= dd.iloc[i] <= hi and (mask is None or mask[i]):
+            events.append(i)
+            armed = False
+    return events
+
+
+def _deploy_path(p: np.ndarray, daily_rf: np.ndarray, buys: dict[int, float],
+                 fee: float) -> tuple[np.ndarray, float]:
+    """從全現金開始，依 buys{第幾天: 投入初始資金的比例} 在收盤買進、之後只抱不賣。
+    回傳 (淨值路徑, 期末持股比例)。"""
+    cash, shares = 1.0, 0.0
+    eq = np.empty(len(p))
+    for t in range(len(p)):
+        if t > 0:
+            cash *= 1.0 + daily_rf[t]
+        amt = min(buys.get(t, 0.0), cash)
+        if amt > 1e-12:
+            shares += amt * (1.0 - fee) / p[t]
+            cash -= amt
+        eq[t] = cash + shares * p[t]
+    return eq, shares * p[-1] / eq[-1]
+
+
+def _first(cond: np.ndarray) -> int | None:
+    idx = np.flatnonzero(cond)
+    return int(idx[0]) if len(idx) else None
+
+
+def bottom_fishing_study(df: pd.DataFrame, cash: np.ndarray, events: list[int],
+                         horizon: int = 252, fee_bps: float = 10.0) -> pd.DataFrame:
+    """從每個事件日開始，比較各種「用現金抄底」方式在 horizon 天後的結果。
+
+    除了「跟著 120 日動量進出」外，其他方式都是買進後一路持有（只決定什麼時候、分幾次進場）；
+    還沒投入的現金按國庫券利率計息。每列為（事件 × 方式）。
+    """
+    close = df["close"].astype(float).reset_index(drop=True)
+    peak = close.rolling(252, min_periods=1).max().to_numpy()
+    mom_up = (close > close.shift(120)).to_numpy()
+    sma_up = (close > close.rolling(200).mean()).to_numpy()
+    inout = switch_returns(df, df, None, cash, rule="mom", lookback=120, fee_bps=fee_bps)
+    fee = fee_bps / 10_000.0
+    rows = []
+    for t0 in events:
+        p = close.to_numpy()[t0:t0 + horizon]
+        rf = cash[t0:t0 + horizon] / 252.0
+        p0, pk = p[0], peak[t0]
+        plans: dict[str, dict[int, float]] = {
+            "立刻全部買進": {0: 1.0},
+            "分 6 個月平均買": {21 * k: 1 / 6 for k in range(6)},
+            "分 12 個月平均買": {21 * k: 1 / 12 for k in range(12) if 21 * k < horizon},
+        }
+        for step, size, label in ((0.05, 0.20, "每再跌 5% 買 20%"), (0.10, 1 / 3, "每再跌 10% 買 1/3")):
+            plan: dict[int, float] = {}
+            for j in range(1, int(round(1 / size)) + 1):
+                d = _first(p <= p0 * (1 - step * j))
+                if d is not None:
+                    plan[d] = plan.get(d, 0.0) + size
+            plans[label] = plan
+        for target in (0.20, 0.30):
+            d = _first(p <= pk * (1 - target))
+            plans[f"等跌到 -{target:.0%} 全買"] = {d: 1.0} if d is not None else {}
+        d_mom = _first(mom_up[t0:t0 + horizon])
+        d_sma = _first(sma_up[t0:t0 + horizon])
+        plans["等 120 日動量轉正全買"] = {d_mom: 1.0} if d_mom is not None else {}
+        plans["等站回 200 日均線全買"] = {d_sma: 1.0} if d_sma is not None else {}
+        half = {0: 0.5}
+        if d_mom is not None:
+            half[d_mom] = half.get(d_mom, 0.0) + 0.5
+        plans["一半現在、一半等動量轉正"] = half
+        plans["全部留在國庫券"] = {}
+
+        further = float(p.min() / p0 - 1.0)
+        for name, plan in plans.items():
+            eq, expo = _deploy_path(p, rf, plan, fee)
+            rows.append({"event": str(df["date"].iloc[t0]), "dd_at_event": 1 - p0 / pk,
+                         "further_drop": further, "strategy": name,
+                         "ret": float(eq[-1] - 1.0),
+                         "mdd": float((eq / np.maximum.accumulate(eq) - 1.0).min()),
+                         "end_expo": expo})
+        eq = np.concatenate([[1.0], np.cumprod(1.0 + inout[t0 + 1:t0 + horizon])])
+        rows.append({"event": str(df["date"].iloc[t0]), "dd_at_event": 1 - p0 / pk,
+                     "further_drop": further, "strategy": "跟著 120 日動量進出（現行策略）",
+                     "ret": float(eq[-1] - 1.0),
+                     "mdd": float((eq / np.maximum.accumulate(eq) - 1.0).min()),
+                     "end_expo": float(mom_up[t0 + horizon - 1])})
+    return pd.DataFrame(rows)
+
+
+def summarize_bottom(res: pd.DataFrame) -> pd.DataFrame:
+    lump = res[res["strategy"] == "立刻全部買進"].set_index("event")["ret"]
+    out = []
+    for name, g in res.groupby("strategy", sort=False):
+        g = g.set_index("event")
+        out.append({"strategy": name, "mean": g["ret"].mean(), "median": g["ret"].median(),
+                    "worst": g["ret"].min(), "best": g["ret"].max(),
+                    "beat_lump": (g["ret"] > lump.reindex(g.index) + 1e-9).mean(),
+                    "avg_mdd": g["mdd"].mean(), "worst_mdd": g["mdd"].min(),
+                    "avg_expo": g["end_expo"].mean()})
+    return pd.DataFrame(out)
