@@ -3,11 +3,15 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1 -Capital 750 -Time 06:30
 #   powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1 -Alt none   # 轉弱時全放國庫券
+#   powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1 -Capital 650 -LevCapital 100
+#     （另加 QLD 200 日均線部位 100；LevCapital 0 代表不加）
 param(
     [string]$Time = "06:00",
     [string]$Ticker = "QQQ",
     [string]$Alt = "GLD:0.5",
     [double]$Capital = 750,
+    [string]$LevTicker = "QLD",
+    [double]$LevCapital = 0,
     [switch]$AlwaysOpen,
     [string]$TaskName = "StockStrategySignal"
 )
@@ -29,7 +33,8 @@ if ($LASTEXITCODE -ne 0) {
 
 if (-not $Alt) { $Alt = "none" }
 $argLine = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$Script`" " +
-           "-Python `"$Python`" -Ticker $Ticker -Capital $Capital -Alt $Alt"
+           "-Python `"$Python`" -Ticker $Ticker -Capital $Capital -Alt $Alt " +
+           "-LevTicker $LevTicker -LevCapital $LevCapital"
 if ($AlwaysOpen) { $argLine += " -AlwaysOpen" }
 
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argLine -WorkingDirectory $Repo
@@ -38,7 +43,7 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatt
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-    -Description "股票策略模擬器：每日 120 日動量訊號（$Ticker）" -Force | Out-Null
+    -Description "股票策略模擬器：每日訊號（$Ticker 動量；$LevTicker 均線部位 $LevCapital）" -Force | Out-Null
 
 Write-Host "已建立排程「$TaskName」：每週二到週六 $Time 執行。"
 Write-Host "電腦當時關機或睡眠的話，開機後會補跑一次。"

@@ -203,7 +203,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1 -Capital
 `signal -t QQQ --rule mom --alt GLD:0.5`，結果存到 `results\signals\<日期>.txt`
 與 `results\signal_latest.txt`；**訊號翻轉或執行失敗時會跳出通知並打開結果檔**。
 電腦當時關機或睡眠的話，開機後會補跑。可用 `-Time 06:30`、`-Alt none`（轉弱時全放國庫券）、
-`-AlwaysOpen`（每天都打開結果檔）調整；移除排程：
+`-AlwaysOpen`（每天都打開結果檔）調整；加 `-LevCapital 100` 會同時跑 QLD 200 日均線部位（例如 `-Capital 650 -LevCapital 100`）。移除排程：
 `powershell -ExecutionPolicy Bypass -File scripts\uninstall_daily_task.ps1`。
 
 ### 組合方案比較：例如「抄底持有 + 動量 + 少量 QLD」
