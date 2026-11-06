@@ -206,6 +206,17 @@ powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1 -Capital
 `-AlwaysOpen`（每天都打開結果檔）調整；移除排程：
 `powershell -ExecutionPolicy Bypass -File scripts\uninstall_daily_task.ps1`。
 
+### 組合方案比較：例如「抄底持有 + 動量 + 少量 QLD」
+
+```bash
+python -m simulator.cli best -t QQQ QLD --years 20 --alt GLD:0.5 --plan-lev 0 0.1 0.2
+python -m simulator.cli best -t ^NDX NDX2X --years 37 --plan-lev 0 0.1 0.2   # 含網路泡沫（轉弱放國庫券）
+```
+
+`--plan-lev` 會加入「`--plan-hold`（預設 25%）第一檔買進持有 + 第一檔 120 日動量
+（有 `--alt` 時轉弱改持有該避險標的）+ 指定比例的第二檔 200 日均線濾網」的組合方案，
+以固定權重、每日再平衡計算，並在輸出最後列出各方案的全期年化、最大回撤、最差一年、Sharpe 與 Calmar。
+
 ### 今日訊號：照策略該怎麼做
 
 ```bash

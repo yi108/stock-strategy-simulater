@@ -270,11 +270,14 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
                  window: int = 252, step: int = 21, fee_bps: float = 10.0,
                  sma_days: int = 200, short_fee: float = 0.0095,
                  alts: dict[str, pd.DataFrame] | None = None,
-                 alt_weights: dict[str, float] | None = None
+                 alt_weights: dict[str, float] | None = None,
+                 plans: dict[str, dict[str, float]] | None = None
                  ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """比較多種候選策略在相同一年期滾動區間的表現。
 
     prices 需已對齊日期（data.align_universe），cash 為對齊的每日年利率。
+    plans 為自訂組合方案 {方案名: {候選策略名: 權重}}，以固定權重（每日再平衡）
+    混合既有候選策略的每日報酬。
     回傳 (每段明細, 各策略統計)。統計中的「全期」指從第一個起點持有到資料結束。
     """
     tickers = list(prices)
@@ -294,6 +297,11 @@ def strategy_lab(prices: dict[str, pd.DataFrame], cash: np.ndarray, first_start:
                 df, df, adf, cash, sma_days, fee_bps, alt_weight=w)
             cont[f"{t} 120日動量 轉負換{label}"] = switch_returns(
                 df, df, adf, cash, sma_days, fee_bps, rule="mom", lookback=120, alt_weight=w)
+    for plan_name, parts in (plans or {}).items():
+        missing = [c for c in parts if c not in cont]
+        if missing:
+            raise ValueError(f"方案「{plan_name}」用到不存在的候選策略：{missing}")
+        cont[plan_name] = sum(w * cont[c] for c, w in parts.items() if w > 0)
     dip_cfgs = _dip_lab_configs()
 
     recs = []

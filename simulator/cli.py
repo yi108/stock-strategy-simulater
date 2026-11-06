@@ -202,6 +202,10 @@ def _main(argv: list[str] | None = None) -> None:
     p.add_argument("--sma-days", type=int, default=200, help="均線濾網天數（預設 200）")
     p.add_argument("--alt", nargs="*", default=[],
                    help="轉弱時改持有的標的（例如 GLD；GLD:0.5 = 一半 GLD 一半國庫券），新增「換 X」候選策略")
+    p.add_argument("--plan-lev", nargs="*", type=float, default=[],
+                   help="組合方案：第二檔（槓桿 ETF，例如 QLD）均線濾網的比例，可給多個，例如 0 0.1 0.2")
+    p.add_argument("--plan-hold", type=float, default=0.25,
+                   help="組合方案：第一檔買進持有（抄底部位）的比例，預設 0.25；其餘為第一檔 120 日動量")
     p.add_argument("--short-fee", type=float, default=0.0095,
                    help="做空年費用（以反向 ETF 計，預設 0.95%%）；空單另賺國庫券利率")
     p.add_argument("--cash-rate", default="auto")
@@ -489,10 +493,32 @@ def _main(argv: list[str] | None = None) -> None:
         cash = cash_for(prices[args.tickers[0]], years=args.years)
         if isinstance(cash, float):
             cash = np.full(len(dates), cash)
+        plans = {}
+        if args.plan_lev:
+            t0 = args.tickers[0]
+            if any(q > 0 for q in args.plan_lev) and len(args.tickers) < 2:
+                raise data.DataError("--plan-lev 需要第二檔標的（例如 -t QQQ QLD）")
+            if alt_specs:
+                n, w = alt_specs[0]
+                label = n if w >= 1.0 else f"{w:.0%}{n}+國庫券"
+                mom_name, mom_desc = f"{t0} 120日動量 轉負換{label}", f"{t0}動量(轉弱{label})"
+            else:
+                mom_name, mom_desc = f"{t0} 120日動量濾網", f"{t0}動量"
+            for q in args.plan_lev:
+                mom_w = 1.0 - args.plan_hold - q
+                if mom_w < -1e-9:
+                    raise data.DataError("--plan-hold 加上 --plan-lev 不能超過 1")
+                parts = {f"{t0} 買進持有": args.plan_hold, mom_name: mom_w}
+                desc = [f"{args.plan_hold:.0%} {t0}持有", f"{mom_w:.0%} {mom_desc}"]
+                if q > 0:
+                    lev = args.tickers[1]
+                    parts[f"{lev} {args.sma_days}日均線濾網"] = q
+                    desc.append(f"{q:.0%} {lev}均線")
+                plans["方案：" + " + ".join(desc)] = parts
         win, summ = strategy_lab(prices, cash, first_start, window=args.window_days,
                                  step=args.step_days, fee_bps=args.fee_bps,
                                  sma_days=args.sma_days, short_fee=args.short_fee,
-                                 alts=alts, alt_weights=alt_weights)
+                                 alts=alts, alt_weights=alt_weights, plans=plans)
         base = f"{args.tickers[0]} 買進持有"
         print(f"\n=== 策略實驗室：{'、'.join(args.tickers)}，起點 {win['start'].iloc[0]} ~ "
               f"{win['start'].iloc[-1]}，共 {win['start'].nunique()} 段一年期區間 ===")
@@ -523,6 +549,14 @@ def _main(argv: list[str] | None = None) -> None:
             mix_rows.append([f"約 -{target:.0%}", f"{f:.0%}", _pct(f * top["premium"]),
                              _pct(f * top["full_mdd"])])
         _table(["目標回撤", f"{top['strategy']} 比例", "估計超額年化", "估計最大回撤"], mix_rows)
+
+        if plans:
+            print("\n組合方案比較（固定權重、每日再平衡）：")
+            ps = summ[summ["strategy"].isin(plans)].set_index("strategy").loc[list(plans)]
+            _table(["方案", "全期年化", "全期最大回撤", "最差一年", "年內最差回撤", "Sharpe", "Calmar"],
+                   [[name, _pct(r["full_cagr"]), _pct(r["full_mdd"]), _pct(r["worst"]),
+                     _pct(r["worst_mdd"]), f"{r['sharpe']:.2f}", f"{r['calmar']:.2f}"]
+                    for name, r in ps.iterrows()])
 
         print("\n依你能承受的最大回撤挑選（全期與任一年內的回撤都不得超過門檻；"
               "以全期年化報酬最高者為準）：")
