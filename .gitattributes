@@ -1,0 +1,2 @@
+# Windows PowerShell 腳本保持 UTF-8 BOM 與 CRLF，不做換行轉換
+*.ps1 -text

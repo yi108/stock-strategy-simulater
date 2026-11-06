@@ -191,6 +191,21 @@ python -m simulator.cli bottom -t QQQ --dd 0.20      # 指定研究跌 20% 的�
 以及「一部分立刻買抱著 + 其餘照 120 日動量進出」的 25/50/75% 混合。
 同時列出每次相似時刻之後「又再跌了多深」，以及各方式的報酬分布、最大回撤與勝過立刻全買的比例。
 
+### 每天自動跑訊號（Windows 工作排程器）
+
+在專案資料夾的 PowerShell 裡執行一次即可：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_daily_task.ps1 -Capital 750
+```
+
+每週二到週六（美股週一到週五收盤後）早上 6:00 自動執行
+`signal -t QQQ --rule mom --alt GLD:0.5`，結果存到 `results\signals\<日期>.txt`
+與 `results\signal_latest.txt`；**訊號翻轉或執行失敗時會跳出通知並打開結果檔**。
+電腦當時關機或睡眠的話，開機後會補跑。可用 `-Time 06:30`、`-Alt none`（轉弱時全放國庫券）、
+`-AlwaysOpen`（每天都打開結果檔）調整；移除排程：
+`powershell -ExecutionPolicy Bypass -File scripts\uninstall_daily_task.ps1`。
+
 ### 今日訊號：照策略該怎麼做
 
 ```bash
